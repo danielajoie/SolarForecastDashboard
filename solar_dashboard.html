@@ -1,0 +1,2494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cabin Solar – Wellfleet</title>
+<!--
+================================================================================
+  CABIN SOLAR DASHBOARD – Wellfleet, MA
+================================================================================
+  USAGE
+  -----
+  1. Open this file in any modern browser (Chrome, Edge, Firefox, Safari).
+     No server or install required.
+
+  2. Click ⚙ Settings to set location and solar arrays (name, watts, tilt,
+     facing). Configuration is saved to localStorage and restored on load.
+
+  3. CSV format (CUMULATIVE totals — not daily production):
+       date,cum_kwh_array1,cum_kwh_array2,...,cum_kwh_arrayN,cv_flag,notes
+     - One cum_kwh_arrayK column per configured array (order matches Settings)
+     - cv_flag: Y = battery ≳90% full → MPPT float mode (recorded kWh is real
+       but a lower bound). N = free collection.
+     - Daily = current_cum − previous_cum; first row is baseline only (no daily).
+
+  4. Load a CSV via “Load CSV”, or enter readings in “Add Daily Reading”.
+     Download the full dataset anytime with “Download Updated CSV”.
+
+  5. Weather/forecast: Open-Meteo (no API key). Calibration uses non-CV days only.
+
+  SAMPLE CSV (2-array default)
+  ----------------------------
+  date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes
+  2026-07-08,2.85,3.41,N,clear
+  2026-07-09,4.97,6.09,N,partly cloudy
+  2026-07-10,8.02,9.81,N,excellent sun
+  2026-07-11,9.50,11.76,Y,batteries full by noon
+  2026-07-12,12.41,15.31,N,clear
+================================================================================
+-->
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-panel: #161b22;
+    --bg-elevated: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #3fb950;
+    --accent-dim: #238636;
+    --array1: #58a6ff;
+    --array2: #a371f7;
+    --cv: #f0883e;
+    --cv-bg: rgba(240, 136, 62, 0.18);
+    --cv-bg-strong: rgba(248, 81, 73, 0.08);
+    --danger: #f85149;
+    --warn: #d29922;
+    --optimistic: #3fb950;
+    --pessimistic: #f85149;
+    --radius: 10px;
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse at 20% 0%, rgba(63, 185, 80, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 100%, rgba(88, 166, 255, 0.05) 0%, transparent 45%);
+  }
+
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 1.25rem 2.5rem;
+  }
+
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+
+  header h1 span { color: var(--accent); font-weight: 500; }
+
+  .meta {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  .meta strong { color: var(--text); font-weight: 550; }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+  }
+
+  .btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 550;
+    padding: 0.5rem 0.95rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+
+  .btn:hover { background: #262c36; border-color: #484f58; }
+  .btn:active { transform: scale(0.98); }
+
+  .btn-primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover { background: #2ea043; border-color: #56d364; }
+
+  .btn-danger {
+    border-color: rgba(248, 81, 73, 0.5);
+    color: #ff7b72;
+  }
+
+  .btn-danger:hover { background: rgba(248, 81, 73, 0.12); }
+
+  .btn-sm {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.65rem;
+  }
+
+  #fileInput { display: none; }
+
+  .banner {
+    display: none;
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    margin-bottom: 1rem;
+    border: 1px solid;
+  }
+
+  .banner.show { display: block; }
+
+  .banner-warn {
+    background: rgba(210, 153, 34, 0.12);
+    border-color: var(--warn);
+    color: #e3b341;
+  }
+
+  .banner-info {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: var(--array1);
+    color: #79b8ff;
+  }
+
+  .correction-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    align-items: center;
+    padding: 0.85rem 1.1rem;
+    background: linear-gradient(135deg, rgba(63, 185, 80, 0.12), rgba(88, 166, 255, 0.08));
+    border: 1px solid var(--accent-dim);
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+  }
+
+  .correction-bar .label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .correction-bar .value {
+    font-family: var(--mono);
+    font-size: 1.35rem;
+    font-weight: 650;
+    color: var(--accent);
+  }
+
+  .correction-bar .detail {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.9rem;
+  }
+
+  .stat .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+  }
+
+  .stat .value {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+
+  .stat .value.a1 { color: var(--array1); }
+  .stat .value.a2 { color: var(--array2); }
+  .stat .value.total { color: var(--accent); }
+
+  .stat .sub {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+    font-weight: 400;
+    font-family: var(--font);
+  }
+
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
+
+  .panel-header h2 {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .panel-header .hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  .panel-header button.collapse-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-family: inherit;
+  }
+
+  .panel-header button.collapse-toggle:hover { color: var(--text); }
+
+  .panel-body { padding: 1rem 1.1rem 1.15rem; }
+
+  .panel.collapsed .panel-body { display: none; }
+
+  .chart-wrap {
+    position: relative;
+    height: 280px;
+    margin-bottom: 1rem;
+  }
+
+  .chart-wrap.tall { height: 300px; }
+
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 800px;
+  }
+
+  th, td {
+    padding: 0.5rem 0.7rem;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child, td:first-child { text-align: left; }
+
+  th {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-weight: 550;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+  }
+
+  tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+  tr.cv-row {
+    background: linear-gradient(90deg, var(--cv-bg) 0%, var(--cv-bg-strong) 100%);
+  }
+
+  tr.cv-row td:first-child { box-shadow: inset 3px 0 0 var(--cv); }
+  tr.cv-row td { border-bottom-color: rgba(240, 136, 62, 0.28); }
+
+  .lb-hint {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--cv);
+    font-weight: 550;
+    margin-top: 0.1rem;
+    line-height: 1.25;
+  }
+
+  .potential-cell {
+    color: var(--cv);
+    font-family: var(--mono);
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 650;
+    padding: 0.12rem 0.45rem;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+  }
+
+  .badge-cv {
+    background: rgba(240, 136, 62, 0.3);
+    color: #ffb77a;
+    border: 1px solid var(--cv);
+  }
+
+  .badge-ok {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+  }
+
+  .badge-hi {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--array1);
+    border: 1px solid #1f6feb;
+  }
+
+  .badge-lo {
+    background: rgba(139, 148, 158, 0.15);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    border-left: 3px solid var(--cv);
+  }
+
+  .note strong { color: var(--cv); }
+
+  .empty-state {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+  }
+
+  .sys-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+  }
+
+  .sys-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+  }
+
+  .sys-card h3 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .sys-card dl {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.3rem 0.75rem;
+    font-size: 0.88rem;
+  }
+
+  .sys-card dt { color: var(--text-muted); }
+  .sys-card dd {
+    font-family: var(--mono);
+    text-align: right;
+    font-weight: 550;
+  }
+
+  .sys-card p {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.65rem;
+    line-height: 1.45;
+  }
+
+  /* ---- Forms (data entry + settings) ---- */
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem 1rem;
+    align-items: end;
+  }
+
+  .form-field label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 0.3rem;
+  }
+
+  .form-field input,
+  .form-field select,
+  .form-field textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.45rem 0.6rem;
+  }
+
+  .form-field input:focus,
+  .form-field select:focus,
+  .form-field textarea:focus {
+    outline: none;
+    border-color: var(--array1);
+  }
+
+  .form-field textarea { min-height: 2.4rem; resize: vertical; }
+
+  .form-field.checkbox-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .form-field.checkbox-field label {
+    margin: 0;
+    text-transform: none;
+    font-size: 0.88rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .form-field.checkbox-field input { width: auto; }
+
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+
+  .form-error {
+    color: var(--danger);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    display: none;
+  }
+
+  .form-error.show { display: block; }
+
+  /* ---- Modal ---- */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(1, 4, 9, 0.72);
+    z-index: 1000;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 1.5rem 1rem;
+    overflow-y: auto;
+  }
+
+  .modal-backdrop.open { display: flex; }
+
+  .modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    width: 100%;
+    max-width: 640px;
+    margin: auto;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.95rem 1.15rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+    border-radius: 12px 12px 0 0;
+  }
+
+  .modal-header h2 { font-size: 1.1rem; font-weight: 600; }
+
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.2rem 0.4rem;
+  }
+
+  .modal-close:hover { color: var(--text); }
+
+  .modal-body { padding: 1.1rem 1.15rem; }
+
+  .modal-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .modal-section h3 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.65rem;
+  }
+
+  .array-editor {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 0.65rem;
+    background: var(--bg-elevated);
+  }
+
+  .array-editor-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.55rem;
+  }
+
+  .array-editor-head .idx {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .modal-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    padding: 0.85rem 1.15rem 1.1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  footer {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+  }
+
+  footer a { color: var(--array1); }
+
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.2rem; }
+    .meta { text-align: left; }
+    .chart-wrap, .chart-wrap.tall { height: 240px; }
+    .wrap { padding: 0.75rem 0.75rem 2rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Cabin Solar <span>– Wellfleet</span></h1>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="btnLoadCsv">Load CSV</button>
+        <button type="button" class="btn" id="btnDownloadCsv">Download Updated CSV</button>
+        <button type="button" class="btn" id="btnReloadWeather">Refresh weather</button>
+        <button type="button" class="btn" id="btnSettings" title="Settings">⚙ Settings</button>
+        <input type="file" id="fileInput" accept=".csv,text/csv,text/plain" />
+      </div>
+    </div>
+    <div class="meta">
+      <div>Last data date: <strong id="lastDataDate">—</strong></div>
+      <div>Last weather fetch: <strong id="lastWeatherFetch">—</strong></div>
+      <div>CSV / source: <strong id="csvFileName">none loaded</strong></div>
+      <div>Arrays: <strong id="arraySummary">—</strong></div>
+    </div>
+  </header>
+
+  <div id="bannerWarn" class="banner banner-warn" role="status"></div>
+  <div id="bannerInfo" class="banner banner-info" role="status"></div>
+
+  <div class="correction-bar" id="correctionBar">
+    <div>
+      <div class="label">Learned correction factor</div>
+      <div class="value" id="correctionValue">1.00×</div>
+    </div>
+    <div class="detail" id="correctionDetail">
+      Load CSV history or enter readings to calibrate against non-CV days.
+      Forecast uses base physics until real data improves the estimate.
+    </div>
+  </div>
+
+  <div class="stats" id="statsStrip">
+    <div class="stat">
+      <div class="label">Days loaded</div>
+      <div class="value" id="statDays">0</div>
+    </div>
+    <div class="stat">
+      <div class="label">Cumulative total</div>
+      <div class="value total" id="statTotalKwh">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">System size</div>
+      <div class="value" id="statWatts">—</div>
+      <div class="sub" id="statWattsSub">configured arrays</div>
+    </div>
+    <div class="stat">
+      <div class="label">Capacity-limited</div>
+      <div class="value" id="statCv" style="color:var(--cv)">—</div>
+      <div class="sub">CV = Y (≳90% SOC)</div>
+    </div>
+    <div class="stat">
+      <div class="label">Avg daily (non-CV)</div>
+      <div class="value total" id="statAvg">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Est. forgone</div>
+      <div class="value" id="statForgone" style="color:var(--cv)">—</div>
+      <div class="sub">on CV days vs model</div>
+    </div>
+  </div>
+
+  <!-- ========== DATA ENTRY ========== -->
+  <section class="panel" id="panelEntry">
+    <div class="panel-header">
+      <h2>Add daily reading</h2>
+      <span class="hint">Enter cumulative meter totals · download CSV anytime</span>
+      <button type="button" class="collapse-toggle" id="btnToggleEntry" aria-expanded="true">Collapse</button>
+    </div>
+    <div class="panel-body" id="entryBody">
+      <form id="entryForm" novalidate>
+        <div class="form-grid" id="entryFields">
+          <!-- filled by JS from configured arrays -->
+        </div>
+        <div class="form-error" id="entryError"></div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add reading</button>
+          <button type="button" class="btn" id="btnDownloadCsv2">Download Updated CSV</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ========== HISTORY ========== -->
+  <section class="panel" id="panelHistory">
+    <div class="panel-header">
+      <h2>1 · Production history</h2>
+      <span class="hint">Daily from cumulative · CV days = capacity-constrained lower bound · potential from weather model</span>
+    </div>
+    <div class="panel-body">
+      <div class="chart-wrap">
+        <canvas id="historyChart"></canvas>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead id="historyTableHead">
+            <!-- dynamic -->
+          </thead>
+          <tbody id="historyTableBody">
+            <tr><td colspan="8" class="empty-state">Load a CSV or add a reading to see production history.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" id="cvImpactNote">
+        <strong>CV = Y (capacity-constrained):</strong> Battery bank ≳90% full — MPPTs in
+        constant-voltage / float mode. Recorded kWh is real energy harvested but a lower bound.
+        Non-CV days calibrate the forecast; CV days show model potential when GHI is available.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== FORECAST ========== -->
+  <section class="panel" id="panelForecast">
+    <div class="panel-header">
+      <h2>2 · 7-day production forecast</h2>
+      <span class="hint">Days 1–3 higher confidence · days 4–7 more uncertain</span>
+    </div>
+    <div class="panel-body">
+      <div class="chart-wrap tall">
+        <canvas id="forecastChart"></canvas>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Conf.</th>
+              <th>GHI (MJ/m²)</th>
+              <th>Clouds %</th>
+              <th>T°C max/min</th>
+              <th>Expected kWh</th>
+              <th>Optimistic</th>
+              <th>Pessimistic</th>
+              <th>Per array</th>
+            </tr>
+          </thead>
+          <tbody id="forecastTableBody">
+            <tr><td colspan="9" class="empty-state">Fetching weather…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" style="border-left-color: var(--array1);">
+        <strong style="color:var(--array1)">How the forecast works:</strong>
+        Open-Meteo daily shortwave radiation feeds a physics model per array
+        (GHI × kW × efficiency × orientation derate), then × learned correction
+        from free-collection (non-CV) history. CV days are excluded from calibration.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== SYSTEM ========== -->
+  <section class="panel" id="panelSystem">
+    <div class="panel-header">
+      <h2>3 · System summary &amp; model</h2>
+      <span class="hint">Edit location &amp; arrays in Settings · other constants in script CONFIG</span>
+    </div>
+    <div class="panel-body">
+      <div class="sys-grid">
+        <div class="sys-card">
+          <h3>Site &amp; arrays</h3>
+          <dl id="sysSiteDl">
+            <dt>Latitude</dt><dd id="sysLat">—</dd>
+            <dt>Longitude</dt><dd id="sysLon">—</dd>
+            <dt>Arrays</dt><dd id="sysArrayCount">—</dd>
+            <dt>Total nominal</dt><dd id="sysTotalW">—</dd>
+          </dl>
+          <div id="sysArrayList" style="margin-top:0.65rem;font-size:0.82rem;color:var(--text-muted)"></div>
+        </div>
+        <div class="sys-card">
+          <h3>Physics model</h3>
+          <dl>
+            <dt>System efficiency</dt><dd id="sysEff">0.78</dd>
+            <dt>MJ → kWh/m²</dt><dd>÷ 3.6</dd>
+            <dt>Correction factor</dt><dd id="sysCorr">1.00×</dd>
+            <dt>Calib. days used</dt><dd id="sysCalibN">0</dd>
+          </dl>
+          <p>
+            expected_kWh ≈ Σ (GHI_kWh/m² × array_kW × η × orient_derate) × correction.
+            Orientation derate is derived from tilt &amp; facing (or an optional stored derate).
+          </p>
+        </div>
+        <div class="sys-card">
+          <h3>Calibration &amp; CV days</h3>
+          <p>
+            Non-CV days with weather GHI: ratio = actual / modeled, recency-weighted
+            (latest 3 free days weighted higher). Result multiplies the 7-day forecast
+            and CV-day potential estimates.
+          </p>
+          <p>
+            <strong style="color:var(--cv)">CV = Y</strong>: SOC ≳90%, MPPTs floated.
+            Recorded kWh is real but capacity-limited (lower bound). Excluded from
+            calibration. Potential = model × correction; forgone = max(0, potential − actual).
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Weather via <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
+    · Charts via Chart.js · Config &amp; data stay in your browser (localStorage)
+  </footer>
+</div>
+
+<!-- ========== SETTINGS MODAL ========== -->
+<div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="settingsTitle">Settings</h2>
+      <button type="button" class="modal-close" id="btnCloseSettings" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-section">
+        <h3>Location</h3>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="cfgLat">Latitude</label>
+            <input type="number" id="cfgLat" step="any" />
+          </div>
+          <div class="form-field">
+            <label for="cfgLon">Longitude</label>
+            <input type="number" id="cfgLon" step="any" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <h3>Solar arrays</h3>
+        <div id="arrayEditors"></div>
+        <button type="button" class="btn btn-sm" id="btnAddArray">+ Add Array</button>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-muted)">
+        CSV columns follow array order: cum_kwh_array1, cum_kwh_array2, …
+        Changing array count may require remapping existing readings.
+      </p>
+      <div class="form-error" id="settingsError"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="btnResetSettings">Reset defaults</button>
+      <button type="button" class="btn" id="btnCancelSettings">Cancel</button>
+      <button type="button" class="btn btn-primary" id="btnSaveSettings">Save &amp; apply</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+/* ============================================================================
+ * CONFIG — defaults & tunable constants (edit freely)
+ * Runtime location/arrays live in `settings` (localStorage-backed).
+ * ========================================================================== */
+const CONFIG = {
+  // ---- Default location (Wellfleet, MA) ----
+  DEFAULT_LAT: 41.9375,
+  DEFAULT_LON: -70.0333,
+  TIMEZONE: "America/New_York",
+
+  // ---- Default arrays (used when nothing in localStorage) ----
+  DEFAULT_ARRAYS: [
+    { id: "arr_east", name: "East Array", watts: 500, tilt: 15, azimuth: "East", derate: 0.90 },
+    { id: "arr_west", name: "West Array", watts: 600, tilt: 35, azimuth: "West", derate: 0.93 },
+  ],
+
+  // ---- Physics ----
+  SYSTEM_EFFICIENCY: 0.78,
+
+  // ---- Forecast uncertainty bands ----
+  OPT_BAND_NEAR: 0.12,
+  PESS_BAND_NEAR: 0.15,
+  OPT_BAND_FAR: 0.22,
+  PESS_BAND_FAR: 0.28,
+
+  // ---- Weather ----
+  PAST_DAYS: 14,
+  FORECAST_DAYS: 7,
+  FORECAST_API: "https://api.open-meteo.com/v1/forecast",
+  ARCHIVE_API: "https://archive-api.open-meteo.com/v1/archive",
+
+  // ---- Cumulative → daily ----
+  // First CSV row is baseline only (no daily). Negative deltas clamped to floor.
+  NEGATIVE_DAILY_FLOOR: 0,
+
+  // ---- localStorage keys ----
+  LS_SETTINGS: "cabinSolar_settings_v2",
+  LS_DATASET: "cabinSolar_dataset_v2",
+  LS_WEATHER: "cabinSolar_weatherCache_v1",
+
+  // ---- Chart palette (cycles for N arrays) ----
+  ARRAY_COLORS: [
+    "#58a6ff", "#a371f7", "#3fb950", "#f0883e",
+    "#79c0ff", "#d2a8ff", "#56d364", "#ffa657",
+  ],
+  COLOR_TOTAL: "#3fb950",
+  COLOR_CUM: "#79c0ff",
+  COLOR_CV: "#f0883e",
+};
+
+/* ============================================================================
+ * RUNTIME STATE
+ * ========================================================================== */
+/** @type {{ lat: number, lon: number, arrays: Array<{id:string,name:string,watts:number,tilt:number,azimuth:string,derate?:number|null}> }} */
+let settings = loadSettings();
+
+const state = {
+  // rows: derived history (see deriveDailyFromCumulative)
+  rows: [],
+  weather: null,
+  weatherFromCache: false,
+  correctionFactor: 1.0,
+  calibDaysUsed: 0,
+  calibRatios: [],
+  historyChart: null,
+  forecastChart: null,
+  csvName: null,
+  dataSource: "none", // "csv" | "entry" | "restored" | "none"
+};
+
+/* ============================================================================
+ * SETTINGS / localStorage
+ * ========================================================================== */
+function uid() {
+  return "arr_" + Math.random().toString(36).slice(2, 10);
+}
+
+function defaultSettings() {
+  return {
+    lat: CONFIG.DEFAULT_LAT,
+    lon: CONFIG.DEFAULT_LON,
+    arrays: CONFIG.DEFAULT_ARRAYS.map((a) => ({ ...a, id: a.id || uid() })),
+  };
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(CONFIG.LS_SETTINGS);
+    if (!raw) return defaultSettings();
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.arrays) || !parsed.arrays.length) {
+      return defaultSettings();
+    }
+    return {
+      lat: Number(parsed.lat) || CONFIG.DEFAULT_LAT,
+      lon: Number(parsed.lon) || CONFIG.DEFAULT_LON,
+      arrays: parsed.arrays.map((a) => ({
+        id: a.id || uid(),
+        name: String(a.name || "Array"),
+        watts: Number(a.watts) || 0,
+        tilt: Number(a.tilt) || 0,
+        azimuth: a.azimuth != null ? String(a.azimuth) : "South",
+        derate: a.derate == null || a.derate === "" ? null : Number(a.derate),
+      })),
+    };
+  } catch {
+    return defaultSettings();
+  }
+}
+
+function saveSettings(s) {
+  localStorage.setItem(CONFIG.LS_SETTINGS, JSON.stringify(s));
+}
+
+function saveDataset() {
+  try {
+    // Store raw cumulative series (not derived dailies)
+    const payload = {
+      source: state.dataSource,
+      name: state.csvName,
+      rows: state.rows.map((r) => ({
+        date: r.date,
+        cum: r.cum.slice(),
+        cv: r.cv,
+        notes: r.rawNotes || "",
+      })),
+    };
+    localStorage.setItem(CONFIG.LS_DATASET, JSON.stringify(payload));
+  } catch (e) {
+    console.warn("Could not persist dataset", e);
+  }
+}
+
+function loadDatasetFromStorage() {
+  try {
+    const raw = localStorage.getItem(CONFIG.LS_DATASET);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.rows) || !data.rows.length) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function arrayCount() {
+  return settings.arrays.length;
+}
+
+function totalWatts() {
+  return settings.arrays.reduce((s, a) => s + (Number(a.watts) || 0), 0);
+}
+
+function arrayColor(i) {
+  return CONFIG.ARRAY_COLORS[i % CONFIG.ARRAY_COLORS.length];
+}
+
+/* ============================================================================
+ * ORIENTATION DERATE
+ * ========================================================================== */
+/** Parse facing text or degrees → azimuth degrees (0=N, 90=E, 180=S, 270=W). */
+function parseAzimuth(az) {
+  if (az == null || az === "") return 180;
+  if (typeof az === "number" && !Number.isNaN(az)) {
+    return ((az % 360) + 360) % 360;
+  }
+  const s = String(az).trim().toLowerCase();
+  if (/^-?\d+(\.\d+)?$/.test(s)) {
+    return ((parseFloat(s) % 360) + 360) % 360;
+  }
+  const map = {
+    n: 0, north: 0,
+    ne: 45, northeast: 45,
+    e: 90, east: 90,
+    se: 135, southeast: 135,
+    s: 180, south: 180,
+    sw: 225, southwest: 225,
+    w: 270, west: 270,
+    nw: 315, northwest: 315,
+  };
+  return map[s] != null ? map[s] : 180;
+}
+
+/**
+ * Orientation derate vs simple GHI × nameplate.
+ * Uses stored array.derate if set; otherwise estimates from tilt + facing.
+ * Defaults were tuned so East 15° ≈ 0.90 and West 35° ≈ 0.93 at Wellfleet.
+ */
+function orientDerate(array) {
+  if (array.derate != null && !Number.isNaN(Number(array.derate)) && Number(array.derate) > 0) {
+    return Number(array.derate);
+  }
+  const az = parseAzimuth(array.azimuth);
+  const fromSouth = Math.min(Math.abs(az - 180), 360 - Math.abs(az - 180)); // 0..180
+  // South-facing ≈ 0.97, east/west (90°) ≈ 0.90, north ≈ 0.78
+  const face = 0.97 - (fromSouth / 90) * 0.07;
+  const lat = settings.lat || CONFIG.DEFAULT_LAT;
+  const idealTilt = Math.max(10, lat - 12); // summer-biased
+  const tilt = Number(array.tilt) || 0;
+  const tiltFactor = Math.max(0.88, 1 - Math.abs(tilt - idealTilt) * 0.0035);
+  return Math.round(Math.min(1, Math.max(0.7, face * tiltFactor)) * 1000) / 1000;
+}
+
+/* ============================================================================
+ * UTILITIES
+ * ========================================================================== */
+function $(id) { return document.getElementById(id); }
+
+function fmt(n, d = 2) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toFixed(d);
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function todayISO() {
+  const n = new Date();
+  return [
+    n.getFullYear(),
+    String(n.getMonth() + 1).padStart(2, "0"),
+    String(n.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function showBanner(el, msg) {
+  if (!msg) {
+    el.classList.remove("show");
+    el.textContent = "";
+    return;
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+}
+
+function mjToKwh(mj) { return mj / 3.6; }
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/* ============================================================================
+ * CSV PARSE / BUILD  (dynamic array columns)
+ * ========================================================================== */
+/**
+ * Derive daily kWh from successive cumulative readings.
+ * daily[i] = cum[i] − prev.cum[i]; first row has no daily (hasDaily=false).
+ */
+function deriveDailyFromCumulative(rawRows) {
+  const nArr = arrayCount();
+  const derived = [];
+
+  for (let i = 0; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    const prev = i > 0 ? rawRows[i - 1] : null;
+    // Normalize cum length to current array count
+    const cum = [];
+    for (let a = 0; a < nArr; a++) {
+      cum.push(Number(r.cum[a]) || 0);
+    }
+    const cumTotal = cum.reduce((s, v) => s + v, 0);
+
+    let kwh = null;
+    let total = null;
+    let hasDaily = false;
+    let isFirst = false;
+    let isGap = false;
+    let extraNote = "";
+
+    if (!prev) {
+      isFirst = true;
+      hasDaily = false;
+      extraNote = "No daily production — baseline row only (no previous cumulative value)";
+    } else {
+      hasDaily = true;
+      kwh = [];
+      const prevCum = [];
+      for (let a = 0; a < nArr; a++) prevCum.push(Number(prev.cum[a]) || 0);
+      for (let a = 0; a < nArr; a++) {
+        let d = cum[a] - prevCum[a];
+        if (CONFIG.NEGATIVE_DAILY_FLOOR != null && d < CONFIG.NEGATIVE_DAILY_FLOOR) {
+          d = CONFIG.NEGATIVE_DAILY_FLOOR;
+        }
+        kwh.push(d);
+      }
+      total = kwh.reduce((s, v) => s + v, 0);
+
+      const prevDate = new Date(prev.date + "T12:00:00");
+      const curDate = new Date(r.date + "T12:00:00");
+      const daySpan = Math.round((curDate - prevDate) / 86400000);
+      if (daySpan > 1) {
+        isGap = true;
+        extraNote = "Date gap — daily = Δ vs previous available row";
+      }
+    }
+
+    const notesParts = [];
+    if (r.notes) notesParts.push(r.notes);
+    if (extraNote) notesParts.push(extraNote);
+
+    derived.push({
+      date: r.date,
+      cum,
+      cumTotal,
+      kwh,
+      total,
+      hasDaily,
+      cv: !!r.cv,
+      notes: notesParts.join(" · "),
+      rawNotes: r.notes || "",
+      isFirst,
+      isGap,
+      potential: null,
+      forgone: null,
+    });
+  }
+  return derived;
+}
+
+function parseCsv(text) {
+  const lines = text.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error("CSV needs a header and at least one data row.");
+
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  if (!header.includes("date") || !header.includes("cv_flag")) {
+    throw new Error('CSV must include "date" and "cv_flag" columns.');
+  }
+
+  const iDate = header.indexOf("date");
+  const iCv = header.indexOf("cv_flag");
+  const iNotes = header.indexOf("notes");
+
+  // Collect cum_kwh_arrayN columns in numeric order
+  const cumCols = [];
+  header.forEach((h, idx) => {
+    let m = h.match(/^cum_kwh_array(\d+)$/) || h.match(/^cum_kwh_(\d+)$/);
+    if (m) cumCols.push({ idx, n: parseInt(m[1], 10) });
+  });
+  cumCols.sort((a, b) => a.n - b.n);
+
+  if (!cumCols.length) {
+    throw new Error(
+      "No cumulative columns found. Expected cum_kwh_array1, cum_kwh_array2, … matching your arrays in Settings."
+    );
+  }
+
+  const nArr = arrayCount();
+  if (cumCols.length !== nArr) {
+    console.warn(
+      `CSV has ${cumCols.length} array column(s) but Settings has ${nArr} array(s). Using min length; pad/truncate as needed.`
+    );
+  }
+
+  const rawRows = [];
+  for (let li = 1; li < lines.length; li++) {
+    const line = lines[li].trim();
+    if (!line || line.startsWith("#")) continue;
+    const parts = splitCsvLine(line);
+    if (parts.length < 3) continue;
+
+    const date = parts[iDate];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.warn("Skipping bad date:", line);
+      continue;
+    }
+
+    const cum = [];
+    for (let a = 0; a < nArr; a++) {
+      const col = cumCols[a];
+      const v = col ? parseFloat(parts[col.idx]) : 0;
+      cum.push(Number.isNaN(v) ? 0 : v);
+    }
+
+    const cvRaw = (parts[iCv] || "N").toUpperCase();
+    const cv = cvRaw === "Y" || cvRaw === "YES" || cvRaw === "1" || cvRaw === "TRUE";
+
+    let notes = "";
+    if (iNotes >= 0 && parts[iNotes] != null) {
+      notes = parts[iNotes];
+      if (iNotes === Math.max(iDate, iCv, iNotes, ...cumCols.map((c) => c.idx)) &&
+          parts.length > iNotes + 1) {
+        notes = parts.slice(iNotes).join(", ");
+      }
+    }
+
+    rawRows.push({ date, cum, cv, notes });
+  }
+
+  rawRows.sort((a, b) => a.date.localeCompare(b.date));
+  if (!rawRows.length) throw new Error("No valid data rows found in CSV.");
+  return deriveDailyFromCumulative(rawRows);
+}
+
+/** Build CSV string from current state.rows matching dynamic array columns. */
+function buildCsvString() {
+  const n = arrayCount();
+  const headers = ["date"];
+  for (let i = 1; i <= n; i++) headers.push(`cum_kwh_array${i}`);
+  headers.push("cv_flag", "notes");
+
+  const lines = [headers.join(",")];
+  for (const r of state.rows) {
+    const cells = [r.date];
+    for (let a = 0; a < n; a++) {
+      const v = r.cum[a] != null ? r.cum[a] : 0;
+      cells.push(String(Number(Number(v).toFixed(4))));
+    }
+    cells.push(r.cv ? "Y" : "N");
+    const notes = (r.rawNotes || "").replace(/"/g, '""');
+    cells.push(notes.includes(",") || notes.includes('"') || notes.includes("\n") ? `"${notes}"` : notes);
+    lines.push(cells.join(","));
+  }
+  return lines.join("\n") + "\n";
+}
+
+function downloadCsv() {
+  if (!state.rows.length) {
+    showBanner($("bannerWarn"), "No data to download. Load a CSV or add a reading first.");
+    return;
+  }
+  const csv = buildCsvString();
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = todayISO();
+  a.href = url;
+  a.download = `solar_history_${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showBanner($("bannerInfo"), `Downloaded solar_history_${stamp}.csv (${state.rows.length} rows).`);
+  setTimeout(() => showBanner($("bannerInfo"), ""), 3000);
+}
+
+/* ============================================================================
+ * PHYSICS MODEL
+ * ========================================================================== */
+function modelArrayKwh(ghiMj, array, correction = 1) {
+  if (ghiMj == null || Number.isNaN(ghiMj) || ghiMj < 0) return null;
+  const ghiKwh = mjToKwh(ghiMj);
+  const arrayKw = (Number(array.watts) || 0) / 1000;
+  return ghiKwh * arrayKw * CONFIG.SYSTEM_EFFICIENCY * orientDerate(array) * correction;
+}
+
+function modelDayTotal(ghiMj, correction = 1) {
+  const per = [];
+  let total = 0;
+  for (const arr of settings.arrays) {
+    const k = modelArrayKwh(ghiMj, arr, correction);
+    if (k == null) return null;
+    per.push(k);
+    total += k;
+  }
+  return { per, total };
+}
+
+function weatherByDate(weather) {
+  const map = new Map();
+  if (!weather || !weather.daily || !weather.daily.time) return map;
+  const d = weather.daily;
+  for (let i = 0; i < d.time.length; i++) {
+    map.set(d.time[i], {
+      ghi: d.shortwave_radiation_sum?.[i] ?? null,
+      cloud: d.cloud_cover_mean?.[i] ?? null,
+      tmax: d.temperature_2m_max?.[i] ?? null,
+      tmin: d.temperature_2m_min?.[i] ?? null,
+    });
+  }
+  return map;
+}
+
+function computeCorrectionFactor(rows, weather) {
+  const wmap = weatherByDate(weather);
+  const ratios = [];
+
+  for (const row of rows) {
+    if (!row.hasDaily || row.total == null) continue;
+    if (row.cv) continue; // lower-bound days excluded
+    const w = wmap.get(row.date);
+    if (!w || w.ghi == null || w.ghi <= 0) continue;
+    const modeled = modelDayTotal(w.ghi, 1);
+    if (!modeled || modeled.total < 0.05) continue;
+    const ratio = row.total / modeled.total;
+    if (ratio < 0.25 || ratio > 2.5) continue;
+    ratios.push({ date: row.date, ratio, actual: row.total, modeled: modeled.total });
+  }
+
+  if (!ratios.length) return { factor: 1.0, n: 0, ratios: [] };
+
+  ratios.sort((a, b) => a.date.localeCompare(b.date));
+  const n = ratios.length;
+  let sumW = 0, sumWR = 0;
+  for (let i = 0; i < n; i++) {
+    const fromEnd = n - 1 - i;
+    let w = 1;
+    if (fromEnd === 0) w = 3;
+    else if (fromEnd === 1) w = 2;
+    else if (fromEnd === 2) w = 1.5;
+    sumW += w;
+    sumWR += w * ratios[i].ratio;
+    ratios[i].weight = w;
+  }
+  return { factor: sumWR / sumW, n, ratios };
+}
+
+function applyCvPotential(rows, weather, correction) {
+  const wmap = weather ? weatherByDate(weather) : new Map();
+  for (const row of rows) {
+    row.potential = null;
+    row.forgone = null;
+    if (!row.hasDaily || row.total == null || !row.cv) continue;
+    const w = wmap.get(row.date);
+    if (!w || w.ghi == null || w.ghi <= 0) continue;
+    const modeled = modelDayTotal(w.ghi, correction);
+    if (!modeled) continue;
+    row.potential = modeled.total;
+    row.forgone = Math.max(0, modeled.total - row.total);
+  }
+}
+
+/* ============================================================================
+ * WEATHER
+ * ========================================================================== */
+async function fetchWeather() {
+  const url = new URL(CONFIG.FORECAST_API);
+  url.searchParams.set("latitude", settings.lat);
+  url.searchParams.set("longitude", settings.lon);
+  url.searchParams.set("timezone", CONFIG.TIMEZONE);
+  url.searchParams.set("past_days", String(CONFIG.PAST_DAYS));
+  url.searchParams.set("forecast_days", String(CONFIG.FORECAST_DAYS));
+  url.searchParams.set(
+    "daily",
+    "shortwave_radiation_sum,cloud_cover_mean,temperature_2m_max,temperature_2m_min"
+  );
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Weather HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data.daily || !data.daily.time) throw new Error("Unexpected weather payload");
+  data._fetchedAt = new Date().toISOString();
+  data._source = "live";
+  return data;
+}
+
+function cacheWeather(data) {
+  try { localStorage.setItem(CONFIG.LS_WEATHER, JSON.stringify(data)); }
+  catch (e) { console.warn("localStorage write failed", e); }
+}
+
+function loadCachedWeather() {
+  try {
+    const raw = localStorage.getItem(CONFIG.LS_WEATHER);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data.daily || !data.daily.time) return null;
+    data._source = "cache";
+    return data;
+  } catch { return null; }
+}
+
+async function loadWeather() {
+  showBanner($("bannerWarn"), "");
+  try {
+    const data = await fetchWeather();
+    state.weather = data;
+    state.weatherFromCache = false;
+    cacheWeather(data);
+    $("lastWeatherFetch").textContent = new Date(data._fetchedAt).toLocaleString();
+    showBanner($("bannerInfo"), "Weather updated from Open-Meteo.");
+    setTimeout(() => showBanner($("bannerInfo"), ""), 3500);
+  } catch (err) {
+    console.error(err);
+    const cached = loadCachedWeather();
+    if (cached) {
+      state.weather = cached;
+      state.weatherFromCache = true;
+      const when = cached._fetchedAt
+        ? new Date(cached._fetchedAt).toLocaleString()
+        : "unknown time";
+      $("lastWeatherFetch").textContent = when + " (cached)";
+      showBanner(
+        $("bannerWarn"),
+        `Weather fetch failed (${err.message}). Showing last successful forecast from ${when}.`
+      );
+    } else {
+      state.weather = null;
+      $("lastWeatherFetch").textContent = "failed";
+      showBanner(
+        $("bannerWarn"),
+        `Weather fetch failed (${err.message}) and no cached forecast is available.`
+      );
+      renderForecastEmpty("Weather unavailable.");
+      return;
+    }
+  }
+  recomputeAndRender();
+}
+
+function buildForecastRows() {
+  if (!state.weather) return [];
+  const today = todayISO();
+  const d = state.weather.daily;
+  const corr = state.correctionFactor;
+  const out = [];
+
+  for (let i = 0; i < d.time.length; i++) {
+    const date = d.time[i];
+    if (date < today) continue;
+    const dayIndex = out.length;
+    if (dayIndex >= CONFIG.FORECAST_DAYS) break;
+
+    const ghi = d.shortwave_radiation_sum?.[i] ?? null;
+    const cloud = d.cloud_cover_mean?.[i] ?? null;
+    const tmax = d.temperature_2m_max?.[i] ?? null;
+    const tmin = d.temperature_2m_min?.[i] ?? null;
+    const modeled = ghi != null ? modelDayTotal(ghi, corr) : null;
+    const near = dayIndex < 3;
+    const optBand = near ? CONFIG.OPT_BAND_NEAR : CONFIG.OPT_BAND_FAR;
+    const pessBand = near ? CONFIG.PESS_BAND_NEAR : CONFIG.PESS_BAND_FAR;
+    const expected = modeled ? modeled.total : null;
+
+    out.push({
+      date,
+      dayIndex,
+      confidence: near ? "high" : "low",
+      ghi, cloud, tmax, tmin,
+      expected,
+      optimistic: expected != null ? expected * (1 + optBand) : null,
+      pessimistic: expected != null ? Math.max(0, expected * (1 - pessBand)) : null,
+      per: modeled ? modeled.per : null,
+    });
+  }
+  return out;
+}
+
+/* ============================================================================
+ * RENDER: ENTRY FORM (dynamic fields per array)
+ * ========================================================================== */
+function renderEntryForm() {
+  const wrap = $("entryFields");
+  let html = `
+    <div class="form-field">
+      <label for="entryDate">Date</label>
+      <input type="date" id="entryDate" required />
+    </div>`;
+  settings.arrays.forEach((arr, i) => {
+    html += `
+    <div class="form-field">
+      <label for="entryCum${i}">${escapeHtml(arr.name)} — cum kWh</label>
+      <input type="number" id="entryCum${i}" step="any" min="0" required
+        placeholder="Cumulative kWh" data-array-index="${i}" />
+    </div>`;
+  });
+  html += `
+    <div class="form-field checkbox-field">
+      <input type="checkbox" id="entryCv" />
+      <label for="entryCv">CV limited (battery ≳90% / float)</label>
+    </div>
+    <div class="form-field" style="grid-column: 1 / -1">
+      <label for="entryNotes">Notes (optional)</label>
+      <input type="text" id="entryNotes" placeholder="e.g. clear, smoke, batteries full by noon" />
+    </div>`;
+  wrap.innerHTML = html;
+
+  // Prefill date = today; cum fields with last row if present
+  const dateEl = $("entryDate");
+  if (dateEl) dateEl.value = todayISO();
+  if (state.rows.length) {
+    const last = state.rows[state.rows.length - 1];
+    settings.arrays.forEach((_, i) => {
+      const el = $("entryCum" + i);
+      if (el && last.cum[i] != null) el.value = last.cum[i];
+    });
+  }
+}
+
+function handleEntrySubmit(e) {
+  e.preventDefault();
+  const err = $("entryError");
+  err.classList.remove("show");
+  err.textContent = "";
+
+  const date = $("entryDate").value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    err.textContent = "Please enter a valid date.";
+    err.classList.add("show");
+    return;
+  }
+
+  const n = arrayCount();
+  const cum = [];
+  for (let i = 0; i < n; i++) {
+    const el = $("entryCum" + i);
+    const v = parseFloat(el.value);
+    if (Number.isNaN(v) || v < 0) {
+      err.textContent = `Enter a valid cumulative kWh for ${settings.arrays[i].name}.`;
+      err.classList.add("show");
+      return;
+    }
+    cum.push(v);
+  }
+
+  // Monotonic check vs previous same-date replace or last earlier date
+  const existingIdx = state.rows.findIndex((r) => r.date === date);
+  const prevRows = state.rows.filter((r) => r.date < date);
+  const prev = prevRows.length ? prevRows[prevRows.length - 1] : null;
+  if (prev) {
+    for (let i = 0; i < n; i++) {
+      if (cum[i] + 1e-9 < prev.cum[i]) {
+        err.textContent =
+          `Cumulative for ${settings.arrays[i].name} (${cum[i]}) is less than previous reading on ${prev.date} (${prev.cum[i]}). ` +
+          `Cumulatives should not decrease.`;
+        err.classList.add("show");
+        return;
+      }
+    }
+  }
+
+  const cv = $("entryCv").checked;
+  const notes = ($("entryNotes").value || "").trim();
+
+  // Rebuild raw list from current rows, upsert this date
+  const rawMap = new Map();
+  for (const r of state.rows) {
+    rawMap.set(r.date, { date: r.date, cum: r.cum.slice(), cv: r.cv, notes: r.rawNotes || "" });
+  }
+  rawMap.set(date, { date, cum, cv, notes });
+  const rawRows = [...rawMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  state.rows = deriveDailyFromCumulative(rawRows);
+  state.dataSource = "entry";
+  if (!state.csvName) state.csvName = "manual entries";
+  $("csvFileName").textContent = state.csvName + " (edited)";
+  saveDataset();
+  recomputeAndRender();
+  renderEntryForm();
+
+  showBanner(
+    $("bannerInfo"),
+    existingIdx >= 0
+      ? `Updated reading for ${date}.`
+      : `Added reading for ${date}. Use Download Updated CSV to save a file.`
+  );
+  setTimeout(() => showBanner($("bannerInfo"), ""), 3500);
+}
+
+/* ============================================================================
+ * RENDER: HISTORY
+ * ========================================================================== */
+function historyColspan() {
+  // date + N daily + total + potential + N cum + cumTotal + cv + notes
+  return 1 + arrayCount() + 1 + 1 + arrayCount() + 1 + 1 + 1;
+}
+
+function renderHistoryHead() {
+  const n = arrayCount();
+  let th = "<tr><th>Date</th>";
+  for (let i = 0; i < n; i++) {
+    th += `<th>${escapeHtml(settings.arrays[i].name)} daily</th>`;
+  }
+  th += "<th>Daily total</th><th>Potential</th>";
+  for (let i = 0; i < n; i++) {
+    th += `<th>Cum ${escapeHtml(settings.arrays[i].name)}</th>`;
+  }
+  th += "<th>Cum total</th><th>CV flag</th><th>Notes</th></tr>";
+  $("historyTableHead").innerHTML = th;
+}
+
+function renderHistory() {
+  renderHistoryHead();
+  const tbody = $("historyTableBody");
+  const rows = state.rows;
+  const n = arrayCount();
+  const span = historyColspan();
+
+  if (!rows.length) {
+    tbody.innerHTML =
+      `<tr><td colspan="${span}" class="empty-state">Load a CSV or add a reading to see production history.</td></tr>`;
+    $("lastDataDate").textContent = "—";
+    $("statDays").textContent = "0";
+    $("statTotalKwh").textContent = "—";
+    $("statCv").textContent = "—";
+    $("statAvg").textContent = "—";
+    $("statForgone").textContent = "—";
+    updateHistoryChart([]);
+    return;
+  }
+
+  const last = rows[rows.length - 1];
+  $("lastDataDate").textContent = last.date;
+
+  let cvCount = 0, nonCvSum = 0, nonCvN = 0, forgoneSum = 0, forgoneN = 0;
+  for (const r of rows) {
+    if (r.cv) cvCount++;
+    if (!r.hasDaily || r.total == null) continue;
+    if (!r.cv) {
+      nonCvSum += r.total;
+      nonCvN++;
+    } else if (r.forgone != null) {
+      forgoneSum += r.forgone;
+      forgoneN++;
+    }
+  }
+
+  $("statDays").textContent = String(rows.length);
+  $("statTotalKwh").textContent = fmt(last.cumTotal, 2);
+  $("statWatts").textContent = totalWatts() + " W";
+  $("statWattsSub").textContent = `${n} array${n === 1 ? "" : "s"}`;
+  $("statCv").textContent = String(cvCount);
+  $("statAvg").textContent = nonCvN ? fmt(nonCvSum / nonCvN, 2) : "—";
+  $("statForgone").textContent = forgoneN ? fmt(forgoneSum, 2) : cvCount ? "n/a" : "—";
+
+  const cvRows = rows.filter((r) => r.cv && r.hasDaily && r.total != null);
+  let impactHtml =
+    "<strong>CV = Y (capacity-constrained):</strong> Battery ≳90% full — MPPTs in float mode. " +
+    "Recorded kWh is real harvested energy but a <em>lower bound</em> (actual ≥ recorded). " +
+    "Non-CV days calibrate the forecast. Daily kWh = current cumulative − previous cumulative.";
+  if (cvRows.length) {
+    const withPot = cvRows.filter((r) => r.potential != null);
+    impactHtml += ` <strong>${cvRows.length}</strong> capacity-limited day(s)`;
+    if (withPot.length) {
+      const sumF = withPot.reduce((s, r) => s + (r.forgone || 0), 0);
+      impactHtml += `. Est. forgone vs model: <strong style="color:var(--cv)">${fmt(sumF)} kWh</strong>`;
+    }
+    impactHtml += ".";
+  }
+  $("cvImpactNote").innerHTML = impactHtml;
+
+  const display = [...rows].reverse();
+  tbody.innerHTML = display
+    .map((r) => {
+      const cls = r.cv ? ' class="cv-row"' : "";
+      const badge = r.cv
+        ? '<span class="badge badge-cv" title="Battery ≳90% · float · lower bound">Y · capacity</span>'
+        : '<span class="badge badge-ok">N · free</span>';
+
+      let noteText;
+      if (r.isFirst || !r.hasDaily) {
+        noteText =
+          '<em style="color:var(--warn)">No daily — baseline only</em>' +
+          (r.rawNotes ? " · " + escapeHtml(r.rawNotes) : "");
+      } else if (r.cv) {
+        noteText =
+          `<span style="color:var(--cv)">CV limited – actual ≥ ${fmt(r.total)} kWh</span>` +
+          (r.potential != null
+            ? ` · potential ~${fmt(r.potential)}` +
+              (r.forgone > 0.01 ? ` (forgone ~${fmt(r.forgone)})` : "")
+            : " · potential n/a") +
+          (r.rawNotes ? " · " + escapeHtml(r.rawNotes) : "");
+      } else {
+        noteText = r.rawNotes ? escapeHtml(r.rawNotes) : "Full collection";
+      }
+
+      let dailyCells = "";
+      for (let a = 0; a < n; a++) {
+        dailyCells += `<td>${
+          r.hasDaily
+            ? fmt(r.kwh[a])
+            : '<span style="color:var(--text-muted)">—</span>'
+        }</td>`;
+      }
+
+      let totalCell;
+      if (!r.hasDaily) {
+        totalCell = '<span style="color:var(--text-muted)">—</span>';
+      } else if (r.cv) {
+        totalCell =
+          `<strong>${fmt(r.total)}</strong>` +
+          `<span class="lb-hint">CV limited – actual ≥ ${fmt(r.total)}</span>`;
+      } else {
+        totalCell = `<strong>${fmt(r.total)}</strong>`;
+      }
+
+      let potCell = '<span style="color:var(--text-muted)">—</span>';
+      if (r.cv && r.hasDaily) {
+        if (r.potential != null) {
+          potCell =
+            `<span class="potential-cell">${fmt(r.potential)}</span>` +
+            (r.forgone > 0.01
+              ? `<span class="lb-hint">forgone ~${fmt(r.forgone)}</span>`
+              : `<span class="lb-hint">≈ recorded</span>`);
+        } else {
+          potCell = '<span style="color:var(--text-muted);font-size:0.78rem">need GHI</span>';
+        }
+      }
+
+      let cumCells = "";
+      for (let a = 0; a < n; a++) {
+        cumCells += `<td style="color:${arrayColor(a)}">${fmt(r.cum[a])}</td>`;
+      }
+
+      return `<tr${cls}>
+        <td>${fmtDate(r.date)} <span style="color:var(--text-muted);font-size:0.78em">${r.date}</span></td>
+        ${dailyCells}
+        <td>${totalCell}</td>
+        <td>${potCell}</td>
+        ${cumCells}
+        <td><strong>${fmt(r.cumTotal)}</strong></td>
+        <td>${badge}</td>
+        <td style="text-align:left;color:var(--text-muted);max-width:240px">${noteText}</td>
+      </tr>`;
+    })
+    .join("");
+
+  updateHistoryChart(rows);
+}
+
+function historyChartTooltipExtra(rows, items) {
+  const i = items[0]?.dataIndex;
+  if (i == null || !rows[i]) return "";
+  const r = rows[i];
+  const extra = [];
+  if (r.isFirst || !r.hasDaily) {
+    extra.push("Baseline row — no daily production");
+  }
+  if (r.cv && r.hasDaily) {
+    extra.push(`CV limited – actual ≥ ${fmt(r.total)} kWh (battery ≳90% · float)`);
+    if (r.potential != null) {
+      extra.push(
+        `Potential ~${fmt(r.potential)} kWh` +
+          (r.forgone > 0.01 ? ` · forgone ~${fmt(r.forgone)}` : "")
+      );
+    }
+  }
+  if (r.isGap) extra.push("Date gap — Δ vs previous available row");
+  if (r.rawNotes) extra.push(r.rawNotes);
+  return extra.join("\n");
+}
+
+function updateHistoryChart(rows) {
+  const labels = rows.map((r) => r.date);
+  const n = arrayCount();
+  const datasets = [];
+
+  for (let a = 0; a < n; a++) {
+    const col = arrayColor(a);
+    datasets.push({
+      type: "bar",
+      label: `${settings.arrays[a].name} daily`,
+      data: rows.map((r) => (r.hasDaily ? r.kwh[a] : null)),
+      yAxisID: "y",
+      stack: "arrays",
+      spanGaps: false,
+      backgroundColor: rows.map((r) =>
+        !r.hasDaily
+          ? "transparent"
+          : r.cv
+            ? "rgba(240, 136, 62, 0.4)"
+            : col + "a6"
+      ),
+      borderColor: rows.map((r) =>
+        !r.hasDaily ? "transparent" : r.cv ? CONFIG.COLOR_CV : col
+      ),
+      borderWidth: rows.map((r) => (r.hasDaily && r.cv ? 2.5 : 1)),
+      borderRadius: 3,
+      order: 3,
+    });
+  }
+
+  datasets.push({
+    type: "line",
+    label: "Daily total (recorded)",
+    data: rows.map((r) => (r.hasDaily ? r.total : null)),
+    yAxisID: "y",
+    stack: "totalLine",
+    spanGaps: false,
+    borderColor: CONFIG.COLOR_TOTAL,
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    tension: 0.25,
+    pointRadius: rows.map((r) => (!r.hasDaily ? 0 : r.cv ? 6 : 3)),
+    pointBackgroundColor: rows.map((r) => (r.cv ? CONFIG.COLOR_CV : CONFIG.COLOR_TOTAL)),
+    pointBorderWidth: 2,
+    order: 2,
+  });
+
+  datasets.push({
+    type: "line",
+    label: "CV day potential (model)",
+    data: rows.map((r) =>
+      r.cv && r.hasDaily && r.potential != null ? r.potential : null
+    ),
+    yAxisID: "y",
+    stack: "potentialLine",
+    spanGaps: false,
+    showLine: false,
+    pointStyle: "triangle",
+    pointRadius: rows.map((r) =>
+      r.cv && r.hasDaily && r.potential != null ? 7 : 0
+    ),
+    pointBackgroundColor: CONFIG.COLOR_CV,
+    pointBorderColor: "#f85149",
+    pointBorderWidth: 1.5,
+    order: 0,
+  });
+
+  datasets.push({
+    type: "line",
+    label: "Cumulative total",
+    data: rows.map((r) => r.cumTotal),
+    yAxisID: "yCum",
+    borderColor: CONFIG.COLOR_CUM,
+    backgroundColor: "rgba(121, 192, 255, 0.12)",
+    fill: true,
+    borderWidth: 2,
+    tension: 0.2,
+    pointRadius: 2,
+    pointBackgroundColor: CONFIG.COLOR_CUM,
+    order: 1,
+  });
+
+  const ctx = $("historyChart").getContext("2d");
+  if (state.historyChart) {
+    state.historyChart.destroy();
+    state.historyChart = null;
+  }
+
+  state.historyChart = new Chart(ctx, {
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#8b949e", boxWidth: 12, padding: 12 } },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              return historyChartTooltipExtra(rows, items);
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: {
+            color: "#8b949e",
+            maxRotation: 45,
+            autoSkip: true,
+            maxTicksLimit: 12,
+          },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+        },
+        y: {
+          position: "left",
+          stacked: true,
+          title: { display: true, text: "Daily kWh", color: "#8b949e" },
+          ticks: { color: "#8b949e" },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+          beginAtZero: true,
+        },
+        yCum: {
+          position: "right",
+          stacked: false,
+          title: { display: true, text: "Cumulative kWh", color: CONFIG.COLOR_CUM },
+          ticks: { color: CONFIG.COLOR_CUM },
+          grid: { drawOnChartArea: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================================
+ * RENDER: FORECAST
+ * ========================================================================== */
+function renderForecastEmpty(msg) {
+  $("forecastTableBody").innerHTML =
+    `<tr><td colspan="9" class="empty-state">${msg}</td></tr>`;
+  updateForecastChart([]);
+}
+
+function renderForecast() {
+  const rows = buildForecastRows();
+  if (!rows.length) {
+    renderForecastEmpty(
+      state.weather ? "No forecast days available." : "Weather not loaded yet."
+    );
+    return;
+  }
+
+  $("forecastTableBody").innerHTML = rows
+    .map((r) => {
+      const confBadge =
+        r.confidence === "high"
+          ? '<span class="badge badge-hi">High (d1–3)</span>'
+          : '<span class="badge badge-lo">Lower (d4–7)</span>';
+      const perStr = r.per
+        ? r.per.map((v, i) => `${settings.arrays[i]?.name?.slice(0, 6) || "A" + (i + 1)}:${fmt(v)}`).join(" · ")
+        : "—";
+      return `<tr>
+        <td>${fmtDate(r.date)} <span style="color:var(--text-muted);font-size:0.78em">${r.date}</span></td>
+        <td>${confBadge}</td>
+        <td>${fmt(r.ghi, 1)}</td>
+        <td>${r.cloud != null ? Math.round(r.cloud) : "—"}</td>
+        <td>${fmt(r.tmax, 0)} / ${fmt(r.tmin, 0)}</td>
+        <td><strong>${fmt(r.expected)}</strong></td>
+        <td style="color:var(--optimistic)">${fmt(r.optimistic)}</td>
+        <td style="color:var(--pessimistic)">${fmt(r.pessimistic)}</td>
+        <td style="font-family:var(--mono);font-size:0.75rem;text-align:left">${perStr}</td>
+      </tr>`;
+    })
+    .join("");
+
+  updateForecastChart(rows);
+}
+
+function updateForecastChart(rows) {
+  const labels = rows.map((r) => r.date);
+  const expected = rows.map((r) => r.expected);
+  const optimistic = rows.map((r) => r.optimistic);
+  const pessimistic = rows.map((r) => r.pessimistic);
+  const range = rows.map((r) =>
+    r.pessimistic != null && r.optimistic != null
+      ? [r.pessimistic, r.optimistic]
+      : [null, null]
+  );
+
+  const datasets = [
+    {
+      type: "bar",
+      label: "Expected kWh (corrected)",
+      data: expected,
+      backgroundColor: rows.map((r) =>
+        r.confidence === "high" ? "rgba(63, 185, 80, 0.7)" : "rgba(63, 185, 80, 0.35)"
+      ),
+      borderColor: CONFIG.COLOR_TOTAL,
+      borderWidth: 1.5,
+      borderRadius: 4,
+      order: 2,
+    },
+    {
+      type: "bar",
+      label: "Optimistic ↔ Pessimistic",
+      data: range,
+      backgroundColor: "rgba(88, 166, 255, 0.18)",
+      borderColor: "rgba(88, 166, 255, 0.45)",
+      borderWidth: 1,
+      borderRadius: 3,
+      order: 3,
+      barPercentage: 0.45,
+    },
+    {
+      type: "line",
+      label: "Optimistic",
+      data: optimistic,
+      borderColor: "rgba(63, 185, 80, 0.5)",
+      borderDash: [4, 4],
+      pointRadius: 0,
+      borderWidth: 1.5,
+      order: 1,
+    },
+    {
+      type: "line",
+      label: "Pessimistic",
+      data: pessimistic,
+      borderColor: "rgba(248, 81, 73, 0.5)",
+      borderDash: [4, 4],
+      pointRadius: 0,
+      borderWidth: 1.5,
+      order: 1,
+    },
+  ];
+
+  const ctx = $("forecastChart").getContext("2d");
+  if (state.forecastChart) {
+    state.forecastChart.destroy();
+    state.forecastChart = null;
+  }
+
+  state.forecastChart = new Chart(ctx, {
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#8b949e", boxWidth: 12, padding: 12 } },
+      },
+      scales: {
+        x: {
+          ticks: { color: "#8b949e", maxRotation: 40 },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+        },
+        y: {
+          title: { display: true, text: "kWh (system total)", color: "#8b949e" },
+          ticks: { color: "#8b949e" },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================================
+ * RENDER: SYSTEM / CORRECTION / HEADER
+ * ========================================================================== */
+function renderSystemSummary() {
+  $("sysLat").textContent = String(settings.lat);
+  $("sysLon").textContent = String(settings.lon);
+  $("sysArrayCount").textContent = String(arrayCount());
+  $("sysTotalW").textContent = totalWatts() + " W";
+  $("sysEff").textContent = String(CONFIG.SYSTEM_EFFICIENCY);
+  $("sysCorr").textContent = fmt(state.correctionFactor, 3) + "×";
+  $("sysCalibN").textContent = String(state.calibDaysUsed);
+
+  $("sysArrayList").innerHTML = settings.arrays
+    .map((a, i) => {
+      const d = orientDerate(a);
+      return `<div style="margin-bottom:0.25rem">
+        <span style="color:${arrayColor(i)};font-weight:600">${escapeHtml(a.name)}</span>
+        — ${a.watts} W · tilt ${a.tilt}° · ${escapeHtml(String(a.azimuth))}
+        · derate ${fmt(d, 3)}
+      </div>`;
+    })
+    .join("");
+
+  $("arraySummary").textContent =
+    settings.arrays.map((a) => `${a.name} ${a.watts}W`).join(" · ") +
+    ` (${totalWatts()} W)`;
+
+  $("statWatts").textContent = totalWatts() + " W";
+  $("statWattsSub").textContent = `${arrayCount()} array${arrayCount() === 1 ? "" : "s"}`;
+}
+
+function renderCorrection() {
+  const f = state.correctionFactor;
+  $("correctionValue").textContent = fmt(f, 3) + "×";
+  $("sysCorr").textContent = fmt(f, 3) + "×";
+  $("sysCalibN").textContent = String(state.calibDaysUsed);
+
+  let detail;
+  if (!state.rows.length) {
+    detail =
+      "Load CSV history or add readings to calibrate against non-CV days. " +
+      "Forecast currently uses base physics only (correction = 1.00×).";
+  } else if (!state.weather) {
+    detail =
+      "Data loaded, but weather is unavailable — cannot compute actual/modeled ratios yet.";
+  } else if (state.calibDaysUsed === 0) {
+    detail =
+      "No overlapping non-CV days with weather GHI found. Correction stays at 1.00×.";
+  } else {
+    const pct = (f - 1) * 100;
+    const direction =
+      Math.abs(pct) < 2
+        ? "closely matches base physics"
+        : pct > 0
+          ? `~${fmt(pct, 0)}% above base physics`
+          : `~${fmt(Math.abs(pct), 0)}% below base physics`;
+    detail =
+      `Calibrated from ${state.calibDaysUsed} free-collection day(s). ` +
+      `System ${direction}. Applied to forecast and CV-day potential. ` +
+      `CV days excluded (recorded kWh is a lower bound).`;
+  }
+  $("correctionDetail").textContent = detail;
+}
+
+function recomputeAndRender() {
+  if (state.rows.length && state.weather) {
+    const cal = computeCorrectionFactor(state.rows, state.weather);
+    state.correctionFactor = cal.factor;
+    state.calibDaysUsed = cal.n;
+    state.calibRatios = cal.ratios;
+    applyCvPotential(state.rows, state.weather, state.correctionFactor);
+  } else if (!state.rows.length) {
+    state.correctionFactor = 1.0;
+    state.calibDaysUsed = 0;
+    state.calibRatios = [];
+  } else {
+    applyCvPotential(state.rows, null, state.correctionFactor);
+  }
+
+  renderSystemSummary();
+  renderCorrection();
+  renderHistory();
+  if (state.weather) renderForecast();
+}
+
+/* ============================================================================
+ * SETTINGS MODAL
+ * ========================================================================== */
+let draftArrays = [];
+
+function openSettings() {
+  $("cfgLat").value = settings.lat;
+  $("cfgLon").value = settings.lon;
+  draftArrays = settings.arrays.map((a) => ({ ...a }));
+  renderArrayEditors();
+  $("settingsError").classList.remove("show");
+  $("settingsModal").classList.add("open");
+}
+
+function closeSettings() {
+  $("settingsModal").classList.remove("open");
+}
+
+function renderArrayEditors() {
+  const host = $("arrayEditors");
+  host.innerHTML = draftArrays
+    .map((a, i) => `
+    <div class="array-editor" data-idx="${i}">
+      <div class="array-editor-head">
+        <span class="idx">Array ${i + 1} · cum_kwh_array${i + 1}</span>
+        <button type="button" class="btn btn-sm btn-danger btn-remove-array" data-idx="${i}"
+          ${draftArrays.length <= 1 ? "disabled" : ""}>Remove</button>
+      </div>
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Name / label</label>
+          <input type="text" class="arr-name" data-idx="${i}" value="${escapeHtml(a.name)}" />
+        </div>
+        <div class="form-field">
+          <label>Wattage (W)</label>
+          <input type="number" class="arr-watts" data-idx="${i}" min="1" step="1" value="${a.watts}" />
+        </div>
+        <div class="form-field">
+          <label>Tilt (°)</label>
+          <input type="number" class="arr-tilt" data-idx="${i}" step="any" value="${a.tilt}" />
+        </div>
+        <div class="form-field">
+          <label>Azimuth / facing</label>
+          <input type="text" class="arr-az" data-idx="${i}" value="${escapeHtml(String(a.azimuth))}"
+            placeholder="East or 90" />
+        </div>
+        <div class="form-field">
+          <label>Derate (optional)</label>
+          <input type="number" class="arr-derate" data-idx="${i}" step="0.01" min="0.5" max="1.2"
+            value="${a.derate != null ? a.derate : ""}" placeholder="auto" />
+        </div>
+      </div>
+    </div>`)
+    .join("");
+
+  host.querySelectorAll(".btn-remove-array").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      syncDraftFromDom();
+      if (draftArrays.length <= 1) return;
+      draftArrays.splice(idx, 1);
+      renderArrayEditors();
+    });
+  });
+}
+
+function syncDraftFromDom() {
+  draftArrays = draftArrays.map((a, i) => {
+    const name = document.querySelector(`.arr-name[data-idx="${i}"]`)?.value?.trim() || a.name;
+    const watts = parseFloat(document.querySelector(`.arr-watts[data-idx="${i}"]`)?.value);
+    const tilt = parseFloat(document.querySelector(`.arr-tilt[data-idx="${i}"]`)?.value);
+    const azimuth = document.querySelector(`.arr-az[data-idx="${i}"]`)?.value?.trim() || a.azimuth;
+    const derateRaw = document.querySelector(`.arr-derate[data-idx="${i}"]`)?.value;
+    const derate =
+      derateRaw === "" || derateRaw == null ? null : parseFloat(derateRaw);
+    return {
+      id: a.id || uid(),
+      name,
+      watts: Number.isNaN(watts) ? 0 : watts,
+      tilt: Number.isNaN(tilt) ? 0 : tilt,
+      azimuth,
+      derate: derate != null && !Number.isNaN(derate) ? derate : null,
+    };
+  });
+}
+
+function saveSettingsFromModal() {
+  const err = $("settingsError");
+  err.classList.remove("show");
+
+  const lat = parseFloat($("cfgLat").value);
+  const lon = parseFloat($("cfgLon").value);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    err.textContent = "Enter valid latitude and longitude.";
+    err.classList.add("show");
+    return;
+  }
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    err.textContent = "Latitude must be −90…90 and longitude −180…180.";
+    err.classList.add("show");
+    return;
+  }
+
+  syncDraftFromDom();
+  if (!draftArrays.length) {
+    err.textContent = "Add at least one solar array.";
+    err.classList.add("show");
+    return;
+  }
+  for (const a of draftArrays) {
+    if (!a.name.trim()) {
+      err.textContent = "Each array needs a name.";
+      err.classList.add("show");
+      return;
+    }
+    if (!(a.watts > 0)) {
+      err.textContent = `Array "${a.name}" needs wattage > 0.`;
+      err.classList.add("show");
+      return;
+    }
+  }
+
+  const oldCount = arrayCount();
+  settings = {
+    lat,
+    lon,
+    arrays: draftArrays.map((a) => ({ ...a })),
+  };
+  saveSettings(settings);
+
+  // Re-derive history if array count changed (pad/truncate cum vectors)
+  if (state.rows.length) {
+    const rawRows = state.rows.map((r) => {
+      const cum = [];
+      for (let i = 0; i < settings.arrays.length; i++) {
+        cum.push(r.cum[i] != null ? r.cum[i] : 0);
+      }
+      return { date: r.date, cum, cv: r.cv, notes: r.rawNotes || "" };
+    });
+    state.rows = deriveDailyFromCumulative(rawRows);
+    saveDataset();
+  }
+
+  closeSettings();
+  renderEntryForm();
+  recomputeAndRender();
+
+  // Location may have changed — refresh weather
+  loadWeather();
+
+  const msg =
+    settings.arrays.length !== oldCount
+      ? `Settings saved (${settings.arrays.length} arrays). Weather reloading…`
+      : "Settings saved. Weather reloading…";
+  showBanner($("bannerInfo"), msg);
+  setTimeout(() => showBanner($("bannerInfo"), ""), 3500);
+}
+
+/* ============================================================================
+ * CSV FILE LOAD
+ * ========================================================================== */
+function handleCsvFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const rows = parseCsv(String(reader.result));
+      state.rows = rows;
+      state.csvName = file.name;
+      state.dataSource = "csv";
+      $("csvFileName").textContent = file.name;
+      saveDataset();
+      showBanner($("bannerInfo"), `Loaded ${rows.length} day(s) from ${file.name}.`);
+      setTimeout(() => showBanner($("bannerInfo"), ""), 3000);
+      recomputeAndRender();
+      renderEntryForm();
+    } catch (err) {
+      showBanner($("bannerWarn"), `CSV error: ${err.message}`);
+    }
+  };
+  reader.onerror = () => showBanner($("bannerWarn"), "Could not read the selected file.");
+  reader.readAsText(file);
+}
+
+function restoreDatasetIfAny() {
+  const data = loadDatasetFromStorage();
+  if (!data) return;
+  try {
+    const rawRows = data.rows.map((r) => ({
+      date: r.date,
+      cum: Array.isArray(r.cum) ? r.cum : [],
+      cv: !!r.cv,
+      notes: r.notes || "",
+    }));
+    // Pad/truncate to current array count
+    const n = arrayCount();
+    for (const r of rawRows) {
+      while (r.cum.length < n) r.cum.push(0);
+      if (r.cum.length > n) r.cum.length = n;
+    }
+    state.rows = deriveDailyFromCumulative(rawRows);
+    state.csvName = data.name || "restored data";
+    state.dataSource = "restored";
+    $("csvFileName").textContent = state.csvName + " (restored)";
+  } catch (e) {
+    console.warn("Could not restore dataset", e);
+  }
+}
+
+/* ============================================================================
+ * INIT
+ * ========================================================================== */
+function init() {
+  renderEntryForm();
+  renderSystemSummary();
+  renderCorrection();
+  renderHistory();
+  renderForecastEmpty("Fetching weather from Open-Meteo…");
+
+  $("btnLoadCsv").addEventListener("click", () => $("fileInput").click());
+  $("fileInput").addEventListener("change", (e) => {
+    handleCsvFile(e.target.files?.[0]);
+    e.target.value = "";
+  });
+  $("btnDownloadCsv").addEventListener("click", downloadCsv);
+  $("btnDownloadCsv2").addEventListener("click", downloadCsv);
+  $("btnReloadWeather").addEventListener("click", () => loadWeather());
+  $("btnSettings").addEventListener("click", openSettings);
+  $("btnCloseSettings").addEventListener("click", closeSettings);
+  $("btnCancelSettings").addEventListener("click", closeSettings);
+  $("btnSaveSettings").addEventListener("click", saveSettingsFromModal);
+  $("btnAddArray").addEventListener("click", () => {
+    syncDraftFromDom();
+    draftArrays.push({
+      id: uid(),
+      name: `Array ${draftArrays.length + 1}`,
+      watts: 400,
+      tilt: 30,
+      azimuth: "South",
+      derate: null,
+    });
+    renderArrayEditors();
+  });
+  $("btnResetSettings").addEventListener("click", () => {
+    if (!confirm("Reset location and arrays to Wellfleet defaults?")) return;
+    draftArrays = defaultSettings().arrays.map((a) => ({ ...a }));
+    $("cfgLat").value = CONFIG.DEFAULT_LAT;
+    $("cfgLon").value = CONFIG.DEFAULT_LON;
+    renderArrayEditors();
+  });
+  $("settingsModal").addEventListener("click", (e) => {
+    if (e.target === $("settingsModal")) closeSettings();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("settingsModal").classList.contains("open")) {
+      closeSettings();
+    }
+  });
+
+  $("entryForm").addEventListener("submit", handleEntrySubmit);
+
+  $("btnToggleEntry").addEventListener("click", () => {
+    const panel = $("panelEntry");
+    const collapsed = panel.classList.toggle("collapsed");
+    $("btnToggleEntry").textContent = collapsed ? "Expand" : "Collapse";
+    $("btnToggleEntry").setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  restoreDatasetIfAny();
+  recomputeAndRender();
+
+  const cached = loadCachedWeather();
+  if (cached) {
+    state.weather = cached;
+    state.weatherFromCache = true;
+    const when = cached._fetchedAt
+      ? new Date(cached._fetchedAt).toLocaleString()
+      : "unknown";
+    $("lastWeatherFetch").textContent = when + " (cached)";
+    recomputeAndRender();
+  }
+
+  loadWeather();
+}
+
+init();
+</script>
+</body>
+</html>

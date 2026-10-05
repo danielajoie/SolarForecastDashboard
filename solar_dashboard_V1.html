@@ -1,0 +1,1961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cabin Solar – Wellfleet</title>
+<!--
+================================================================================
+  CABIN SOLAR DASHBOARD – Wellfleet, MA
+================================================================================
+  USAGE
+  -----
+  1. Open this file in any modern browser (Chrome, Edge, Firefox, Safari).
+     Double-click solar_dashboard.html, or drag it into a browser tab.
+     No server or install required.
+
+  2. Prepare a CSV with this exact header row (CUMULATIVE totals, not daily):
+       date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes
+     - date:             YYYY-MM-DD
+     - cum_kwh_array1:   lifetime/running kWh from the 500 W east array
+     - cum_kwh_array2:   lifetime/running kWh from the 600 W west array
+     - cv_flag:          Y = battery bank was ≳90% full → MPPTs in constant-voltage
+                         (float) mode. Recorded kWh is real energy harvested that day
+                         (roughly matching cabin loads) but is a lower bound: more could
+                         have been collected if the battery had headroom. N = free
+                         collection (not capacity-constrained).
+     - notes:            free-text (optional); e.g. weather or site notes
+
+     Daily production is derived as:
+       daily = current_day_cumulative − previous_day_cumulative
+     The first CSV row is a baseline only (no prior reading → no daily value).
+     The first valid daily is row 2 − row 1; then each row N − row N−1.
+
+  3. Click “Load CSV” and select your file. History table + chart update
+     immediately. If weather data is available, the forecast re-calibrates
+     using non-CV days only (actual / modeled ratio). CV days still show
+     recorded kWh and an estimated “potential” from the weather model.
+
+  4. Weather/forecast loads automatically from Open-Meteo (no API key).
+     If offline or the request fails, the last successful forecast from
+     localStorage is shown with a warning banner.
+
+  5. Tune model constants in the CONFIG block at the top of the <script>
+     section (efficiency, orientation derates, location, API URLs).
+
+  SAMPLE CSV (copy into a .csv file to try the dashboard)
+  -------------------------------------------------------
+  date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes
+  2026-07-08,2.85,3.41,N,clear
+  2026-07-09,4.97,6.09,N,partly cloudy
+  2026-07-10,8.02,9.81,N,excellent sun
+  2026-07-11,9.50,11.76,Y,batteries full by noon
+  2026-07-12,12.41,15.31,N,clear
+  2026-07-13,15.59,19.20,N,hazy but bright
+  2026-07-14,18.26,22.42,N,thin high cloud
+  2026-07-15,19.48,24.10,Y,float most of afternoon
+  2026-07-16,21.93,27.11,N,clear
+  2026-07-17,24.95,30.76,N,forest fire smoke thinning
+
+  SYSTEM
+  ------
+  Site: Wellfleet, MA (41.9375, -70.0333)
+  Array 1: 500 W, east-facing, 15° tilt  → separate MPPT
+  Array 2: 600 W, west-facing, 35° tilt  → separate MPPT
+  Shared battery bank; total nominal 1100 W
+================================================================================
+-->
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-panel: #161b22;
+    --bg-elevated: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #3fb950;
+    --accent-dim: #238636;
+    --array1: #58a6ff;
+    --array2: #a371f7;
+    --cv: #f0883e;
+    --cv-bg: rgba(240, 136, 62, 0.18);
+    --cv-bg-strong: rgba(248, 81, 73, 0.08);
+    --danger: #f85149;
+    --warn: #d29922;
+    --optimistic: #3fb950;
+    --pessimistic: #f85149;
+    --radius: 10px;
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse at 20% 0%, rgba(63, 185, 80, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 100%, rgba(88, 166, 255, 0.05) 0%, transparent 45%);
+  }
+
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 1.25rem 2.5rem;
+  }
+
+  /* ---- Header ---- */
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+
+  header h1 span {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .meta {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  .meta strong { color: var(--text); font-weight: 550; }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+  }
+
+  .btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 550;
+    padding: 0.5rem 0.95rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+
+  .btn:hover {
+    background: #262c36;
+    border-color: #484f58;
+  }
+
+  .btn:active { transform: scale(0.98); }
+
+  .btn-primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover {
+    background: #2ea043;
+    border-color: #56d364;
+  }
+
+  #fileInput { display: none; }
+
+  /* ---- Banners ---- */
+  .banner {
+    display: none;
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    margin-bottom: 1rem;
+    border: 1px solid;
+  }
+
+  .banner.show { display: block; }
+
+  .banner-warn {
+    background: rgba(210, 153, 34, 0.12);
+    border-color: var(--warn);
+    color: #e3b341;
+  }
+
+  .banner-info {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: var(--array1);
+    color: #79b8ff;
+  }
+
+  .banner-ok {
+    background: rgba(63, 185, 80, 0.1);
+    border-color: var(--accent);
+    color: #56d364;
+  }
+
+  /* ---- Correction factor callout ---- */
+  .correction-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    align-items: center;
+    padding: 0.85rem 1.1rem;
+    background: linear-gradient(135deg, rgba(63, 185, 80, 0.12), rgba(88, 166, 255, 0.08));
+    border: 1px solid var(--accent-dim);
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+  }
+
+  .correction-bar .label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .correction-bar .value {
+    font-family: var(--mono);
+    font-size: 1.35rem;
+    font-weight: 650;
+    color: var(--accent);
+  }
+
+  .correction-bar .detail {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 200px;
+  }
+
+  /* ---- Stats strip ---- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.9rem;
+  }
+
+  .stat .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+  }
+
+  .stat .value {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+
+  .stat .value.a1 { color: var(--array1); }
+  .stat .value.a2 { color: var(--array2); }
+  .stat .value.total { color: var(--accent); }
+
+  /* ---- Panels ---- */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
+
+  .panel-header h2 {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .panel-header .hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  .panel-body { padding: 1rem 1.1rem 1.15rem; }
+
+  .chart-wrap {
+    position: relative;
+    height: 280px;
+    margin-bottom: 1rem;
+  }
+
+  .chart-wrap.tall { height: 300px; }
+
+  /* ---- Tables ---- */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 800px;
+  }
+
+  th, td {
+    padding: 0.5rem 0.7rem;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child, td:first-child { text-align: left; }
+
+  th {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-weight: 550;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    position: sticky;
+    top: 0;
+  }
+
+  tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+  tr.cv-row {
+    background: linear-gradient(90deg, var(--cv-bg) 0%, var(--cv-bg-strong) 100%);
+  }
+
+  tr.cv-row td:first-child {
+    box-shadow: inset 3px 0 0 var(--cv);
+  }
+
+  tr.cv-row td {
+    border-bottom-color: rgba(240, 136, 62, 0.28);
+  }
+
+  .lb-hint {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--cv);
+    font-weight: 550;
+    margin-top: 0.1rem;
+    line-height: 1.25;
+  }
+
+  .potential-cell {
+    color: var(--cv);
+    font-family: var(--mono);
+  }
+
+  .stat .sub {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+    font-weight: 400;
+    font-family: var(--font);
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 650;
+    padding: 0.12rem 0.45rem;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+  }
+
+  .badge-cv {
+    background: rgba(240, 136, 62, 0.3);
+    color: #ffb77a;
+    border: 1px solid var(--cv);
+  }
+
+  .badge-ok {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+  }
+
+  .badge-hi {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--array1);
+    border: 1px solid #1f6feb;
+  }
+
+  .badge-lo {
+    background: rgba(139, 148, 158, 0.15);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    border-left: 3px solid var(--cv);
+  }
+
+  .note strong { color: var(--cv); }
+
+  .empty-state {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+  }
+
+  .empty-state code {
+    font-family: var(--mono);
+    background: var(--bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+
+  /* ---- System summary ---- */
+  .sys-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+  }
+
+  .sys-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+  }
+
+  .sys-card h3 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .sys-card dl {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.3rem 0.75rem;
+    font-size: 0.88rem;
+  }
+
+  .sys-card dt { color: var(--text-muted); }
+  .sys-card dd {
+    font-family: var(--mono);
+    text-align: right;
+    font-weight: 550;
+  }
+
+  .sys-card p {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.65rem;
+    line-height: 1.45;
+  }
+
+  footer {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+  }
+
+  footer a { color: var(--array1); }
+
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.2rem; }
+    .meta { text-align: left; }
+    .chart-wrap, .chart-wrap.tall { height: 240px; }
+    .wrap { padding: 0.75rem 0.75rem 2rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Cabin Solar <span>– Wellfleet</span></h1>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="btnLoadCsv">Load CSV</button>
+        <button type="button" class="btn" id="btnReloadWeather">Refresh weather</button>
+        <input type="file" id="fileInput" accept=".csv,text/csv,text/plain" />
+      </div>
+    </div>
+    <div class="meta">
+      <div>Last data date: <strong id="lastDataDate">—</strong></div>
+      <div>Last weather fetch: <strong id="lastWeatherFetch">—</strong></div>
+      <div>CSV file: <strong id="csvFileName">none loaded</strong></div>
+    </div>
+  </header>
+
+  <div id="bannerWarn" class="banner banner-warn" role="status"></div>
+  <div id="bannerInfo" class="banner banner-info" role="status"></div>
+
+  <!-- Learned correction factor (updates when CSV + weather align) -->
+  <div class="correction-bar" id="correctionBar">
+    <div>
+      <div class="label">Learned correction factor</div>
+      <div class="value" id="correctionValue">1.00×</div>
+    </div>
+    <div class="detail" id="correctionDetail">
+      Load CSV history to calibrate the model against non-CV days.
+      Forecast uses base physics until real data improves the estimate.
+    </div>
+  </div>
+
+  <div class="stats" id="statsStrip">
+    <div class="stat">
+      <div class="label">Days loaded</div>
+      <div class="value" id="statDays">0</div>
+    </div>
+    <div class="stat">
+      <div class="label">Cumulative total</div>
+      <div class="value total" id="statTotalKwh">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Cum. Array 1</div>
+      <div class="value a1" id="statA1">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Cum. Array 2</div>
+      <div class="value a2" id="statA2">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Capacity-limited</div>
+      <div class="value" id="statCv" style="color:var(--cv)">—</div>
+      <div class="sub" id="statCvSub">CV = Y (≳90% SOC)</div>
+    </div>
+    <div class="stat">
+      <div class="label">Avg daily (non-CV)</div>
+      <div class="value total" id="statAvg">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Est. forgone</div>
+      <div class="value" id="statForgone" style="color:var(--cv)">—</div>
+      <div class="sub" id="statForgoneSub">on CV days vs model</div>
+    </div>
+  </div>
+
+  <!-- ========== PANEL 1: HISTORY ========== -->
+  <section class="panel" id="panelHistory">
+    <div class="panel-header">
+      <h2>1 · Production history</h2>
+      <span class="hint">Daily from cumulative · CV days = capacity-constrained (actual is a lower bound) · potential from weather model</span>
+    </div>
+    <div class="panel-body">
+      <div class="chart-wrap">
+        <canvas id="historyChart"></canvas>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>A1 daily</th>
+              <th>A2 daily</th>
+              <th>Daily total</th>
+              <th>Potential</th>
+              <th>Cum A1</th>
+              <th>Cum A2</th>
+              <th>Cum total</th>
+              <th>CV flag</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody">
+            <tr><td colspan="10" class="empty-state">Load a CSV to see daily production (derived from cumulative totals).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" id="cvImpactNote">
+        <strong>CV = Y (capacity-constrained):</strong> Battery bank ≳90% full — MPPTs in
+        constant-voltage / float mode. Recorded kWh is real energy harvested (roughly what
+        cabin loads used) but is a lower bound; more could have been collected with free
+        battery headroom. Non-CV days calibrate the forecast; CV days show model potential.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== PANEL 2: FORECAST ========== -->
+  <section class="panel" id="panelForecast">
+    <div class="panel-header">
+      <h2>2 · 7-day production forecast</h2>
+      <span class="hint">Days 1–3 higher confidence · days 4–7 more uncertain</span>
+    </div>
+    <div class="panel-body">
+      <div class="chart-wrap tall">
+        <canvas id="forecastChart"></canvas>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Conf.</th>
+              <th>GHI (MJ/m²)</th>
+              <th>Clouds %</th>
+              <th>T°C max/min</th>
+              <th>Expected kWh</th>
+              <th>Optimistic</th>
+              <th>Pessimistic</th>
+              <th>A1 / A2</th>
+            </tr>
+          </thead>
+          <tbody id="forecastTableBody">
+            <tr><td colspan="9" class="empty-state">Fetching weather…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" style="border-left-color: var(--array1);">
+        <strong style="color:var(--array1)">How the forecast works:</strong>
+        Daily shortwave radiation from Open-Meteo feeds a simple physics model per array
+        (GHI × kW × efficiency × orientation derate), then multiplied by the learned
+        correction factor from free-collection (non-CV) history only. CV = Y days are
+        capacity-constrained lower bounds and are not used for calibration; their
+        historical “potential” uses this same corrected model. Optimistic / pessimistic
+        bands widen for days 4–7.
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== PANEL 3: SYSTEM SUMMARY ========== -->
+  <section class="panel" id="panelSystem">
+    <div class="panel-header">
+      <h2>3 · System summary &amp; model constants</h2>
+      <span class="hint">Edit constants in the script CONFIG block</span>
+    </div>
+    <div class="panel-body">
+      <div class="sys-grid">
+        <div class="sys-card">
+          <h3>Site &amp; arrays</h3>
+          <dl>
+            <dt>Location</dt><dd>Wellfleet, MA</dd>
+            <dt>Latitude</dt><dd id="sysLat">41.9375</dd>
+            <dt>Longitude</dt><dd id="sysLon">-70.0333</dd>
+            <dt>Array 1</dt><dd>500 W · East · 15°</dd>
+            <dt>Array 2</dt><dd>600 W · West · 35°</dd>
+            <dt>Total nominal</dt><dd>1100 W</dd>
+          </dl>
+        </div>
+        <div class="sys-card">
+          <h3>Physics model</h3>
+          <dl>
+            <dt>System efficiency</dt><dd id="sysEff">0.78</dd>
+            <dt>East 15° derate</dt><dd id="sysEast">0.90</dd>
+            <dt>West 35° derate</dt><dd id="sysWest">0.93</dd>
+            <dt>MJ → kWh/m²</dt><dd>÷ 3.6</dd>
+            <dt>Correction factor</dt><dd id="sysCorr">1.00×</dd>
+            <dt>Calib. days used</dt><dd id="sysCalibN">0</dd>
+          </dl>
+          <p>
+            expected_kWh ≈ (GHI_kWh/m² × array_kW) × η × orientation_derate × correction.<br />
+            GHI already embeds cloud/weather from the weather model.
+          </p>
+        </div>
+        <div class="sys-card">
+          <h3>Orientation notes</h3>
+          <p>
+            <strong style="color:var(--array1)">EAST_DERATE (0.90):</strong>
+            East azimuth, shallow 15° tilt — strong morning production, earlier roll-off
+            in afternoon. Slightly below an ideal south-facing reference.
+          </p>
+          <p>
+            <strong style="color:var(--array2)">WEST_DERATE (0.93):</strong>
+            West azimuth, 35° tilt — better summer incidence for Cape Cod latitude and
+            captures afternoon sun; modest derate vs due-south optimum.
+          </p>
+          <p>
+            Both multipliers are relative to a simple horizontal-GHI × nameplate model
+            and are refined further by the learned correction factor from your CSV.
+          </p>
+        </div>
+        <div class="sys-card">
+          <h3>Calibration &amp; CV days</h3>
+          <p>
+            For each non-CV day with both actual kWh and weather GHI, compute
+            ratio = actual_total / modeled_total. Apply a recency-weighted average:
+            the most recent 3 non-CV days get weight 3, 2, 1.5 respectively; older
+            days get weight 1. Result multiplies the 7-day forecast.
+          </p>
+          <p>
+            <strong style="color:var(--cv)">CV = Y</strong> means SOC ≳90% and MPPTs
+            floated: recorded kWh is real but capacity-limited (a lower bound). Those days
+            are excluded from calibration so the correction factor reflects true array
+            capability. For CV days with weather GHI, the dashboard shows model
+            “potential” (weather × efficiency × derates × correction) and estimated
+            forgone kWh = max(0, potential − actual).
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Weather via <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
+    · Charts via Chart.js · All processing stays in your browser
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+/* ============================================================================
+ * CONFIG — all tunable constants live here. Edit freely.
+ * ========================================================================== */
+const CONFIG = {
+  // ---- Location (Wellfleet, MA) ----
+  LAT: 41.9375,
+  LON: -70.0333,
+  TIMEZONE: "America/New_York",
+
+  // ---- Array nameplate (W) ----
+  ARRAY1_W: 500,   // East-facing, 15° tilt
+  ARRAY2_W: 600,   // West-facing, 35° tilt
+
+  // ---- Physics model ----
+  // Base system efficiency: inverter + wiring + soiling + mismatch + thermal.
+  // Start at 0.78; learned correction factor absorbs residual bias.
+  SYSTEM_EFFICIENCY: 0.78,
+
+  // Orientation derates vs simple GHI × nameplate model.
+  // East 15°: morning bias, shallower tilt → ~0.90
+  // West 35°: afternoon bias, steeper summer-friendly tilt → ~0.93
+  EAST_15_DERATE: 0.90,
+  WEST_35_DERATE: 0.93,
+
+  // ---- Forecast uncertainty bands (fraction of expected) ----
+  // Days 1–3 (higher confidence)
+  OPT_BAND_NEAR: 0.12,
+  PESS_BAND_NEAR: 0.15,
+  // Days 4–7 (lower confidence)
+  OPT_BAND_FAR: 0.22,
+  PESS_BAND_FAR: 0.28,
+
+  // ---- Weather fetch ----
+  PAST_DAYS: 14,       // historical GHI for calibration
+  FORECAST_DAYS: 7,
+  FORECAST_API: "https://api.open-meteo.com/v1/forecast",
+  // Archive kept as fallback if forecast+past_days is insufficient
+  ARCHIVE_API: "https://archive-api.open-meteo.com/v1/archive",
+
+  // ---- localStorage keys ----
+  LS_WEATHER: "cabinSolar_weatherCache_v1",
+  LS_CSV_META: "cabinSolar_csvMeta_v1",
+
+  // ---- CSV cumulative → daily derivation ----
+  // Daily is always (current_cum − previous_cum). The first CSV row has no previous
+  // reading, so it contributes no daily value (baseline only). Chart/table/calibration
+  // start daily series at the second data point.
+
+  // If a day's cumulative reading is lower than the previous row (meter reset /
+  // typo), clamp the derived daily to this floor instead of showing a large negative.
+  // Set to null to keep raw (possibly negative) deltas.
+  NEGATIVE_DAILY_FLOOR: 0,
+
+  // ---- Chart colors ----
+  COLOR_A1: "#58a6ff",
+  COLOR_A2: "#a371f7",
+  COLOR_TOTAL: "#3fb950",
+  COLOR_CUM: "#79c0ff",
+  COLOR_CV: "#f0883e",
+  COLOR_OPT: "rgba(63, 185, 80, 0.35)",
+  COLOR_PESS: "rgba(248, 81, 73, 0.25)",
+};
+
+/* ============================================================================
+ * STATE
+ * ========================================================================== */
+const state = {
+  // rows: { date, cum1, cum2, cumTotal, kwh1, kwh2, total, hasDaily, cv, notes,
+  //         isFirst, isGap, potential?, forgone? }
+  // kwh1/kwh2/total = DERIVED daily (null when isFirst); cum* from CSV
+  // potential/forgone set on CV days when weather GHI is available
+  rows: [],
+  weather: null,            // Open-Meteo daily payload + meta
+  weatherFromCache: false,
+  correctionFactor: 1.0,
+  calibDaysUsed: 0,
+  calibRatios: [],          // debug/display
+  historyChart: null,
+  forecastChart: null,
+  csvName: null,
+};
+
+/* ============================================================================
+ * UTILITIES
+ * ========================================================================== */
+function $(id) { return document.getElementById(id); }
+
+function fmt(n, d = 2) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toFixed(d);
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  // Parse as local calendar date (avoid UTC shift)
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function todayISO() {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const d = String(n.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function daysAgoISO(n) {
+  const dt = new Date();
+  dt.setDate(dt.getDate() - n);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function showBanner(el, msg) {
+  if (!msg) {
+    el.classList.remove("show");
+    el.textContent = "";
+    return;
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+}
+
+/** MJ/m² → kWh/m² */
+function mjToKwh(mj) {
+  return mj / 3.6;
+}
+
+/* ============================================================================
+ * CSV PARSING (cumulative totals → derived daily)
+ * ========================================================================== */
+/**
+ * Split a CSV line on commas, respecting simple double-quoted fields.
+ */
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/**
+ * Derive daily kWh from successive cumulative readings.
+ * daily = current_cum − previous_cum for every row that has a prior reading.
+ * The first row is baseline only: no daily value (hasDaily = false).
+ * Gaps in dates still use the previous available row (not zero-filled days).
+ */
+function deriveDailyFromCumulative(rawRows) {
+  // rawRows sorted by date ascending; each has date, cum1, cum2, cv, notes
+  const derived = [];
+  for (let i = 0; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    const prev = i > 0 ? rawRows[i - 1] : null;
+    let kwh1 = null;
+    let kwh2 = null;
+    let total = null;
+    let hasDaily = false;
+    let isFirst = false;
+    let isGap = false;
+    let firstDayNote = "";
+
+    if (!prev) {
+      // No previous cumulative → cannot compute a daily figure
+      isFirst = true;
+      hasDaily = false;
+      kwh1 = null;
+      kwh2 = null;
+      total = null;
+      firstDayNote =
+        "No daily production — baseline row only (no previous cumulative value)";
+    } else {
+      kwh1 = r.cum1 - prev.cum1;
+      kwh2 = r.cum2 - prev.cum2;
+      hasDaily = true;
+
+      // Optional clamp for meter resets / typos
+      if (CONFIG.NEGATIVE_DAILY_FLOOR != null) {
+        if (kwh1 < CONFIG.NEGATIVE_DAILY_FLOOR) kwh1 = CONFIG.NEGATIVE_DAILY_FLOOR;
+        if (kwh2 < CONFIG.NEGATIVE_DAILY_FLOOR) kwh2 = CONFIG.NEGATIVE_DAILY_FLOOR;
+      }
+      total = kwh1 + kwh2;
+
+      // Date gap: still difference against previous available cumulative row
+      const prevDate = new Date(prev.date + "T12:00:00");
+      const curDate = new Date(r.date + "T12:00:00");
+      const daySpan = Math.round((curDate - prevDate) / 86400000);
+      if (daySpan > 1) {
+        isGap = true;
+      }
+    }
+
+    const notesParts = [];
+    if (r.notes) notesParts.push(r.notes);
+    if (firstDayNote) notesParts.push(firstDayNote);
+    if (isGap) notesParts.push("Date gap — daily = Δ vs previous available row");
+
+    derived.push({
+      date: r.date,
+      cum1: r.cum1,
+      cum2: r.cum2,
+      cumTotal: r.cum1 + r.cum2,
+      kwh1,
+      kwh2,
+      total,
+      hasDaily,
+      cv: r.cv,
+      notes: notesParts.join(" · "),
+      isFirst,
+      isGap,
+    });
+  }
+  return derived;
+}
+
+function parseCsv(text) {
+  const lines = text.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error("CSV needs a header and at least one data row.");
+
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const req = ["date", "cum_kwh_array1", "cum_kwh_array2", "cv_flag"];
+  for (const col of req) {
+    if (!header.includes(col)) {
+      throw new Error(
+        `Missing required column "${col}". Expected: date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes. Found: ${header.join(", ")}`
+      );
+    }
+  }
+
+  const iDate = header.indexOf("date");
+  const i1 = header.indexOf("cum_kwh_array1");
+  const i2 = header.indexOf("cum_kwh_array2");
+  const iCv = header.indexOf("cv_flag");
+  const iNotes = header.indexOf("notes");
+
+  const rawRows = [];
+  for (let li = 1; li < lines.length; li++) {
+    const line = lines[li].trim();
+    if (!line || line.startsWith("#")) continue;
+    const parts = splitCsvLine(line);
+    if (parts.length < 4) continue;
+
+    const date = parts[iDate];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.warn("Skipping bad date row:", line);
+      continue;
+    }
+    const cum1 = parseFloat(parts[i1]);
+    const cum2 = parseFloat(parts[i2]);
+    if (Number.isNaN(cum1) || Number.isNaN(cum2)) {
+      console.warn("Skipping non-numeric row:", line);
+      continue;
+    }
+    const cvRaw = (parts[iCv] || "N").toUpperCase();
+    const cv = cvRaw === "Y" || cvRaw === "YES" || cvRaw === "1" || cvRaw === "TRUE";
+
+    // Notes: named column, or any trailing fields after the last known column
+    let notes = "";
+    if (iNotes >= 0 && parts[iNotes] != null) {
+      notes = parts[iNotes];
+      // If notes contained commas and we only got one field, trailing parts may remain
+      // when index is last column — join remainder if more fields exist after notes
+      if (iNotes === Math.max(iDate, i1, i2, iCv, iNotes) && parts.length > iNotes + 1) {
+        notes = parts.slice(iNotes).join(", ");
+      }
+    }
+
+    rawRows.push({ date, cum1, cum2, cv, notes });
+  }
+
+  rawRows.sort((a, b) => a.date.localeCompare(b.date));
+  if (!rawRows.length) throw new Error("No valid data rows found in CSV.");
+  return deriveDailyFromCumulative(rawRows);
+}
+
+/* ============================================================================
+ * PHYSICS MODEL
+ * ========================================================================== */
+/**
+ * Modeled daily kWh for one array from daily GHI.
+ * @param {number} ghiMj  shortwave_radiation_sum MJ/m²
+ * @param {number} arrayW nameplate watts
+ * @param {number} orientDerate EAST_15_DERATE or WEST_35_DERATE
+ * @param {number} [correction=1] learned factor
+ */
+function modelArrayKwh(ghiMj, arrayW, orientDerate, correction = 1) {
+  if (ghiMj == null || Number.isNaN(ghiMj) || ghiMj < 0) return null;
+  const ghiKwh = mjToKwh(ghiMj);
+  const arrayKw = arrayW / 1000;
+  // expected_kWh ≈ (GHI × array_W/1000) × efficiency × orientation × correction
+  return ghiKwh * arrayKw * CONFIG.SYSTEM_EFFICIENCY * orientDerate * correction;
+}
+
+function modelDayTotal(ghiMj, correction = 1) {
+  const a1 = modelArrayKwh(ghiMj, CONFIG.ARRAY1_W, CONFIG.EAST_15_DERATE, correction);
+  const a2 = modelArrayKwh(ghiMj, CONFIG.ARRAY2_W, CONFIG.WEST_35_DERATE, correction);
+  if (a1 == null || a2 == null) return null;
+  return { a1, a2, total: a1 + a2 };
+}
+
+/**
+ * Build GHI lookup map from weather payload: date -> { ghi, cloud, tmax, tmin }
+ */
+function weatherByDate(weather) {
+  const map = new Map();
+  if (!weather || !weather.daily || !weather.daily.time) return map;
+  const d = weather.daily;
+  for (let i = 0; i < d.time.length; i++) {
+    map.set(d.time[i], {
+      ghi: d.shortwave_radiation_sum?.[i] ?? null,
+      cloud: d.cloud_cover_mean?.[i] ?? null,
+      tmax: d.temperature_2m_max?.[i] ?? null,
+      tmin: d.temperature_2m_min?.[i] ?? null,
+    });
+  }
+  return map;
+}
+
+/**
+ * Calibration: weighted average of actual/modeled ratios on non-CV days only.
+ * CV days are capacity-constrained (float mode) — recorded kWh is a lower bound,
+ * so they must not pull the correction factor down. Most recent 3 non-CV days
+ * get higher weights (3, 2, 1.5); older get 1.
+ */
+function computeCorrectionFactor(rows, weather) {
+  const wmap = weatherByDate(weather);
+  const ratios = [];
+
+  for (const row of rows) {
+    if (!row.hasDaily || row.total == null) continue; // need derived daily (not baseline row)
+    if (row.cv) continue; // capacity-constrained lower-bound — skip calibration
+    const w = wmap.get(row.date);
+    if (!w || w.ghi == null || w.ghi <= 0) continue;
+
+    // Modeled without correction (base physics only)
+    const modeled = modelDayTotal(w.ghi, 1);
+    if (!modeled || modeled.total < 0.05) continue;
+
+    const ratio = row.total / modeled.total;
+    // Sanity clamp — reject absurd outliers
+    if (ratio < 0.25 || ratio > 2.5) continue;
+    ratios.push({ date: row.date, ratio, actual: row.total, modeled: modeled.total });
+  }
+
+  if (!ratios.length) {
+    return { factor: 1.0, n: 0, ratios: [] };
+  }
+
+  // Sort by date ascending; weight most recent 3 higher
+  ratios.sort((a, b) => a.date.localeCompare(b.date));
+  const n = ratios.length;
+  let sumW = 0;
+  let sumWR = 0;
+
+  for (let i = 0; i < n; i++) {
+    const fromEnd = n - 1 - i; // 0 = most recent
+    let w = 1;
+    if (fromEnd === 0) w = 3;
+    else if (fromEnd === 1) w = 2;
+    else if (fromEnd === 2) w = 1.5;
+
+    sumW += w;
+    sumWR += w * ratios[i].ratio;
+    ratios[i].weight = w;
+  }
+
+  const factor = sumWR / sumW;
+  return { factor, n, ratios };
+}
+
+/**
+ * For CV = Y days with weather GHI, estimate unconstrained potential using the
+ * same physics model × learned correction factor (from non-CV days).
+ * Recorded kWh stays as-is; potential and forgone are annotations only.
+ * forgone = max(0, potential − actual).
+ */
+function applyCvPotential(rows, weather, correction) {
+  const wmap = weather ? weatherByDate(weather) : new Map();
+  for (const row of rows) {
+    row.potential = null;
+    row.forgone = null;
+    if (!row.hasDaily || row.total == null) continue;
+    if (!row.cv) continue; // only annotate capacity-constrained days
+
+    const w = wmap.get(row.date);
+    if (!w || w.ghi == null || w.ghi <= 0) continue;
+
+    const modeled = modelDayTotal(w.ghi, correction);
+    if (!modeled || modeled.total == null) continue;
+
+    row.potential = modeled.total;
+    row.forgone = Math.max(0, modeled.total - row.total);
+  }
+}
+
+/* ============================================================================
+ * WEATHER FETCH + CACHE
+ * ========================================================================== */
+async function fetchWeather() {
+  const url = new URL(CONFIG.FORECAST_API);
+  url.searchParams.set("latitude", CONFIG.LAT);
+  url.searchParams.set("longitude", CONFIG.LON);
+  url.searchParams.set("timezone", CONFIG.TIMEZONE);
+  url.searchParams.set("past_days", String(CONFIG.PAST_DAYS));
+  url.searchParams.set("forecast_days", String(CONFIG.FORECAST_DAYS));
+  url.searchParams.set(
+    "daily",
+    [
+      "shortwave_radiation_sum",
+      "cloud_cover_mean",
+      "temperature_2m_max",
+      "temperature_2m_min",
+    ].join(",")
+  );
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Weather HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data.daily || !data.daily.time) throw new Error("Unexpected weather payload");
+
+  data._fetchedAt = new Date().toISOString();
+  data._source = "live";
+  return data;
+}
+
+function cacheWeather(data) {
+  try {
+    localStorage.setItem(CONFIG.LS_WEATHER, JSON.stringify(data));
+  } catch (e) {
+    console.warn("localStorage write failed", e);
+  }
+}
+
+function loadCachedWeather() {
+  try {
+    const raw = localStorage.getItem(CONFIG.LS_WEATHER);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data.daily || !data.daily.time) return null;
+    data._source = "cache";
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function loadWeather({ force = false } = {}) {
+  showBanner($("bannerWarn"), "");
+  try {
+    const data = await fetchWeather();
+    state.weather = data;
+    state.weatherFromCache = false;
+    cacheWeather(data);
+    $("lastWeatherFetch").textContent = new Date(data._fetchedAt).toLocaleString();
+    showBanner($("bannerInfo"), "Weather updated from Open-Meteo.");
+    setTimeout(() => showBanner($("bannerInfo"), ""), 3500);
+  } catch (err) {
+    console.error(err);
+    const cached = loadCachedWeather();
+    if (cached) {
+      state.weather = cached;
+      state.weatherFromCache = true;
+      const when = cached._fetchedAt
+        ? new Date(cached._fetchedAt).toLocaleString()
+        : "unknown time";
+      $("lastWeatherFetch").textContent = when + " (cached)";
+      showBanner(
+        $("bannerWarn"),
+        `Weather fetch failed (${err.message}). Showing last successful forecast from ${when}.`
+      );
+    } else {
+      state.weather = null;
+      state.weatherFromCache = false;
+      $("lastWeatherFetch").textContent = "failed";
+      showBanner(
+        $("bannerWarn"),
+        `Weather fetch failed (${err.message}) and no cached forecast is available. History still works offline.`
+      );
+      renderForecastEmpty("Weather unavailable.");
+      return;
+    }
+  }
+
+  recomputeAndRender();
+}
+
+/* ============================================================================
+ * FORECAST BUILD
+ * ========================================================================== */
+function buildForecastRows() {
+  if (!state.weather) return [];
+
+  const today = todayISO();
+  const d = state.weather.daily;
+  const corr = state.correctionFactor;
+  const out = [];
+
+  for (let i = 0; i < d.time.length; i++) {
+    const date = d.time[i];
+    // Forecast panel: today and future only
+    if (date < today) continue;
+
+    const dayIndex = out.length; // 0 = today
+    if (dayIndex >= CONFIG.FORECAST_DAYS) break;
+
+    const ghi = d.shortwave_radiation_sum?.[i] ?? null;
+    const cloud = d.cloud_cover_mean?.[i] ?? null;
+    const tmax = d.temperature_2m_max?.[i] ?? null;
+    const tmin = d.temperature_2m_min?.[i] ?? null;
+
+    const modeled = ghi != null ? modelDayTotal(ghi, corr) : null;
+    const near = dayIndex < 3;
+    const optBand = near ? CONFIG.OPT_BAND_NEAR : CONFIG.OPT_BAND_FAR;
+    const pessBand = near ? CONFIG.PESS_BAND_NEAR : CONFIG.PESS_BAND_FAR;
+
+    const expected = modeled ? modeled.total : null;
+    const optimistic = expected != null ? expected * (1 + optBand) : null;
+    const pessimistic = expected != null ? Math.max(0, expected * (1 - pessBand)) : null;
+
+    out.push({
+      date,
+      dayIndex,
+      confidence: near ? "high" : "low",
+      ghi,
+      cloud,
+      tmax,
+      tmin,
+      expected,
+      optimistic,
+      pessimistic,
+      a1: modeled ? modeled.a1 : null,
+      a2: modeled ? modeled.a2 : null,
+    });
+  }
+
+  return out;
+}
+
+/* ============================================================================
+ * RENDER: HISTORY
+ * ========================================================================== */
+function renderHistory() {
+  const tbody = $("historyTableBody");
+  const rows = state.rows;
+
+  if (!rows.length) {
+    tbody.innerHTML =
+      '<tr><td colspan="10" class="empty-state">Load a CSV to see daily production (derived from cumulative totals).</td></tr>';
+    $("lastDataDate").textContent = "—";
+    $("statDays").textContent = "0";
+    $("statTotalKwh").textContent = "—";
+    $("statA1").textContent = "—";
+    $("statA2").textContent = "—";
+    $("statCv").textContent = "—";
+    $("statAvg").textContent = "—";
+    if ($("statForgone")) $("statForgone").textContent = "—";
+    updateHistoryChart([]);
+    return;
+  }
+
+  const last = rows[rows.length - 1];
+  $("lastDataDate").textContent = last.date;
+
+  // Stats: cumulative from latest reading; avg daily only free-collection days
+  let cvCount = 0, nonCvSum = 0, nonCvN = 0, forgoneSum = 0, forgoneN = 0;
+  for (const r of rows) {
+    if (r.cv) cvCount++;
+    if (!r.hasDaily || r.total == null) continue;
+    if (!r.cv) {
+      nonCvSum += r.total;
+      nonCvN++;
+    } else if (r.forgone != null) {
+      forgoneSum += r.forgone;
+      forgoneN++;
+    }
+  }
+
+  $("statDays").textContent = String(rows.length);
+  $("statTotalKwh").textContent = fmt(last.cumTotal, 2);
+  $("statA1").textContent = fmt(last.cum1, 2);
+  $("statA2").textContent = fmt(last.cum2, 2);
+  $("statCv").textContent = String(cvCount);
+  $("statAvg").textContent = nonCvN ? fmt(nonCvSum / nonCvN, 2) : "—";
+  if ($("statForgone")) {
+    $("statForgone").textContent = forgoneN ? fmt(forgoneSum, 2) : (cvCount ? "n/a" : "—");
+  }
+
+  // CV impact summary
+  const cvRows = rows.filter((r) => r.cv && r.hasDaily && r.total != null);
+  let impactHtml =
+    "<strong>CV = Y (capacity-constrained):</strong> Battery ≳90% full — MPPTs in constant-voltage / float mode. " +
+    "Recorded kWh is real harvested energy (often ≈ cabin load) but is a <em>lower bound</em> " +
+    "(actual ≥ recorded). More could have been collected with free battery headroom. " +
+    "Non-CV days calibrate the forecast; CV days show weather-model potential when GHI is available. " +
+    "Daily kWh = current cumulative − previous cumulative.";
+  if (cvRows.length) {
+    const avgCv = cvRows.reduce((s, r) => s + r.total, 0) / cvRows.length;
+    const avgNon = nonCvN ? nonCvSum / nonCvN : null;
+    const withPot = cvRows.filter((r) => r.potential != null);
+    impactHtml += ` <strong>${cvRows.length}</strong> capacity-limited day(s)`;
+    if (avgNon != null) {
+      impactHtml += ` — avg recorded CV day ${fmt(avgCv)} kWh vs avg free day ${fmt(avgNon)} kWh`;
+    }
+    if (withPot.length) {
+      const sumForgone = withPot.reduce((s, r) => s + (r.forgone || 0), 0);
+      impactHtml += `. Est. forgone vs model on ${withPot.length} day(s): <strong style="color:var(--cv)">${fmt(sumForgone)} kWh</strong>`;
+    }
+    impactHtml += ".";
+  } else {
+    impactHtml += " No CV days with derived daily values in the loaded file.";
+  }
+  $("cvImpactNote").innerHTML = impactHtml;
+
+  // Table (newest first for readability)
+  const display = [...rows].reverse();
+  tbody.innerHTML = display
+    .map((r) => {
+      const cls = r.cv ? ' class="cv-row"' : "";
+      const badge = r.cv
+        ? '<span class="badge badge-cv" title="Battery ≳90% full · float mode · recorded kWh is a lower bound">Y · capacity</span>'
+        : '<span class="badge badge-ok">N · free</span>';
+      let noteText;
+      if (r.isFirst || !r.hasDaily) {
+        noteText =
+          '<em style="color:var(--warn)">No daily — baseline only (no previous cumulative)</em>' +
+          (r.notes
+            ? '<span> · ' +
+              escapeHtml(
+                r.notes
+                  .replace(
+                    /^No daily production — baseline row only \(no previous cumulative value\)(?: · )?/,
+                    ""
+                  )
+                  .trim()
+              ) +
+              "</span>"
+            : "");
+        if (noteText.endsWith("<span> · </span>")) {
+          noteText = noteText.replace(/<span> · <\/span>$/, "");
+        }
+      } else if (r.cv) {
+        const lb = r.hasDaily
+          ? `CV limited – actual ≥ ${fmt(r.total)} kWh`
+          : "CV limited – capacity-constrained";
+        const potNote =
+          r.potential != null
+            ? ` · potential ~${fmt(r.potential)} kWh` +
+              (r.forgone > 0.01 ? ` (forgone ~${fmt(r.forgone)})` : "")
+            : " · potential n/a (no weather GHI)";
+        const userNote = r.notes ? " · " + escapeHtml(r.notes) : "";
+        noteText = `<span style="color:var(--cv)">${lb}</span>${potNote}${userNote}`;
+      } else {
+        noteText = r.notes ? escapeHtml(r.notes) : "Full collection";
+      }
+
+      const dailyCell = (v) =>
+        r.hasDaily ? fmt(v) : '<span style="color:var(--text-muted)" title="No previous cumulative">—</span>';
+
+      let totalCell;
+      if (!r.hasDaily) {
+        totalCell = '<span style="color:var(--text-muted)">—</span>';
+      } else if (r.cv) {
+        totalCell =
+          `<strong>${fmt(r.total)}</strong>` +
+          `<span class="lb-hint" title="Recorded harvest is real; more could have been collected if batteries had headroom">CV limited – actual ≥ ${fmt(r.total)}</span>`;
+      } else {
+        totalCell = `<strong>${fmt(r.total)}</strong>`;
+      }
+
+      let potCell = '<span style="color:var(--text-muted)">—</span>';
+      if (r.cv && r.hasDaily) {
+        if (r.potential != null) {
+          potCell =
+            `<span class="potential-cell" title="Weather model × correction factor">${fmt(r.potential)}</span>` +
+            (r.forgone > 0.01
+              ? `<span class="lb-hint">forgone ~${fmt(r.forgone)}</span>`
+              : `<span class="lb-hint">≈ recorded</span>`);
+        } else {
+          potCell = '<span style="color:var(--text-muted);font-size:0.78rem">need GHI</span>';
+        }
+      }
+
+      return `<tr${cls}>
+        <td>${fmtDate(r.date)} <span style="color:var(--text-muted);font-size:0.78em">${r.date}</span></td>
+        <td>${dailyCell(r.kwh1)}</td>
+        <td>${dailyCell(r.kwh2)}</td>
+        <td>${totalCell}</td>
+        <td>${potCell}</td>
+        <td style="color:var(--array1)">${fmt(r.cum1)}</td>
+        <td style="color:var(--array2)">${fmt(r.cum2)}</td>
+        <td><strong>${fmt(r.cumTotal)}</strong></td>
+        <td>${badge}</td>
+        <td style="text-align:left;color:var(--text-muted);max-width:240px">${noteText}</td>
+      </tr>`;
+    })
+    .join("");
+
+  updateHistoryChart(rows);
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function historyChartTooltipExtra(rows, items) {
+  const i = items[0]?.dataIndex;
+  if (i == null || !rows[i]) return "";
+  const r = rows[i];
+  const extra = [];
+  if (r.isFirst || !r.hasDaily) {
+    extra.push("Baseline row — no daily production (no previous cumulative)");
+  }
+  if (r.cv && r.hasDaily) {
+    extra.push(
+      `CV limited – actual ≥ ${fmt(r.total)} kWh (battery ≳90% · float mode)`
+    );
+    if (r.potential != null) {
+      extra.push(
+        `Estimated potential ~${fmt(r.potential)} kWh` +
+          (r.forgone > 0.01 ? ` · forgone ~${fmt(r.forgone)} kWh` : "")
+      );
+    } else {
+      extra.push("Potential n/a — no overlapping weather GHI for this day");
+    }
+  }
+  if (r.isGap) extra.push("Date gap — Δ vs previous available row");
+  if (r.notes) extra.push(r.notes);
+  return extra.join("\n");
+}
+
+function updateHistoryChart(rows) {
+  const labels = rows.map((r) => r.date);
+  // null daily values for the baseline (first) row so Chart.js omits bars/points
+  const a1 = rows.map((r) => (r.hasDaily ? r.kwh1 : null));
+  const a2 = rows.map((r) => (r.hasDaily ? r.kwh2 : null));
+  const dailyTotal = rows.map((r) => (r.hasDaily ? r.total : null));
+  // Potential only plotted on CV days (capacity-constrained lower-bound days)
+  const cvPotential = rows.map((r) =>
+    r.cv && r.hasDaily && r.potential != null ? r.potential : null
+  );
+  const cumTotal = rows.map((r) => r.cumTotal);
+  const cvBorder = rows.map((r) => (r.cv ? CONFIG.COLOR_CV : "rgba(0,0,0,0)"));
+
+  const datasets = [
+    {
+      type: "bar",
+      label: "Array 1 daily (east 500 W)",
+      data: a1,
+      yAxisID: "y",
+      stack: "arrays",
+      spanGaps: false,
+      backgroundColor: rows.map((r) =>
+        !r.hasDaily
+          ? "transparent"
+          : r.cv
+            ? "rgba(240, 136, 62, 0.45)"
+            : "rgba(88, 166, 255, 0.65)"
+      ),
+      borderColor: rows.map((r) =>
+        !r.hasDaily ? "transparent" : r.cv ? CONFIG.COLOR_CV : CONFIG.COLOR_A1
+      ),
+      borderWidth: rows.map((r) => (r.hasDaily && r.cv ? 2.5 : 1)),
+      borderRadius: 3,
+      order: 3,
+    },
+    {
+      type: "bar",
+      label: "Array 2 daily (west 600 W)",
+      data: a2,
+      yAxisID: "y",
+      stack: "arrays",
+      spanGaps: false,
+      backgroundColor: rows.map((r) =>
+        !r.hasDaily
+          ? "transparent"
+          : r.cv
+            ? "rgba(248, 81, 73, 0.28)"
+            : "rgba(163, 113, 247, 0.65)"
+      ),
+      borderColor: rows.map((r) =>
+        !r.hasDaily ? "transparent" : r.cv ? "#f85149" : CONFIG.COLOR_A2
+      ),
+      borderWidth: rows.map((r) => (r.hasDaily && r.cv ? 2.5 : 1)),
+      borderRadius: 3,
+      order: 3,
+    },
+    {
+      type: "line",
+      label: "Daily total (recorded)",
+      data: dailyTotal,
+      yAxisID: "y",
+      stack: "totalLine",
+      spanGaps: false,
+      borderColor: CONFIG.COLOR_TOTAL,
+      backgroundColor: "transparent",
+      borderWidth: 2,
+      tension: 0.25,
+      pointRadius: rows.map((r) => (!r.hasDaily ? 0 : r.cv ? 6 : 3)),
+      pointBackgroundColor: rows.map((r) => (r.cv ? CONFIG.COLOR_CV : CONFIG.COLOR_TOTAL)),
+      pointBorderColor: cvBorder,
+      pointBorderWidth: 2,
+      order: 2,
+    },
+    {
+      type: "line",
+      label: "CV day potential (model)",
+      data: cvPotential,
+      yAxisID: "y",
+      stack: "potentialLine",
+      spanGaps: false,
+      showLine: false,
+      borderColor: CONFIG.COLOR_CV,
+      backgroundColor: CONFIG.COLOR_CV,
+      pointStyle: "triangle",
+      pointRadius: rows.map((r) =>
+        r.cv && r.hasDaily && r.potential != null ? 7 : 0
+      ),
+      pointHoverRadius: 9,
+      pointBackgroundColor: CONFIG.COLOR_CV,
+      pointBorderColor: "#f85149",
+      pointBorderWidth: 1.5,
+      order: 0,
+    },
+    {
+      type: "line",
+      label: "Cumulative total",
+      data: cumTotal,
+      yAxisID: "yCum",
+      borderColor: CONFIG.COLOR_CUM,
+      backgroundColor: "rgba(121, 192, 255, 0.12)",
+      fill: true,
+      borderWidth: 2,
+      tension: 0.2,
+      pointRadius: 2,
+      pointBackgroundColor: CONFIG.COLOR_CUM,
+      order: 1,
+    },
+  ];
+
+  const ctx = $("historyChart").getContext("2d");
+  if (state.historyChart) {
+    state.historyChart.data.labels = labels;
+    state.historyChart.data.datasets = datasets;
+    state.historyChart.options.plugins.tooltip.callbacks.afterBody = (items) =>
+      historyChartTooltipExtra(rows, items);
+    state.historyChart.update();
+    return;
+  }
+
+  state.historyChart = new Chart(ctx, {
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: "#8b949e", boxWidth: 12, padding: 14 },
+        },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              return historyChartTooltipExtra(rows, items);
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: { color: "#8b949e", maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+        },
+        y: {
+          position: "left",
+          stacked: true,
+          title: { display: true, text: "Daily kWh", color: "#8b949e" },
+          ticks: { color: "#8b949e" },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+          beginAtZero: true,
+        },
+        yCum: {
+          position: "right",
+          stacked: false,
+          title: { display: true, text: "Cumulative kWh", color: CONFIG.COLOR_CUM },
+          ticks: { color: CONFIG.COLOR_CUM },
+          grid: { drawOnChartArea: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================================
+ * RENDER: FORECAST
+ * ========================================================================== */
+function renderForecastEmpty(msg) {
+  $("forecastTableBody").innerHTML =
+    `<tr><td colspan="9" class="empty-state">${msg}</td></tr>`;
+  updateForecastChart([]);
+}
+
+function renderForecast() {
+  const rows = buildForecastRows();
+  if (!rows.length) {
+    renderForecastEmpty(
+      state.weather
+        ? "No forecast days available in weather payload."
+        : "Weather not loaded yet."
+    );
+    return;
+  }
+
+  $("forecastTableBody").innerHTML = rows
+    .map((r) => {
+      const confBadge =
+        r.confidence === "high"
+          ? '<span class="badge badge-hi">High (d1–3)</span>'
+          : '<span class="badge badge-lo">Lower (d4–7)</span>';
+      return `<tr>
+        <td>${fmtDate(r.date)} <span style="color:var(--text-muted);font-size:0.78em">${r.date}</span></td>
+        <td>${confBadge}</td>
+        <td>${fmt(r.ghi, 1)}</td>
+        <td>${r.cloud != null ? Math.round(r.cloud) : "—"}</td>
+        <td>${fmt(r.tmax, 0)} / ${fmt(r.tmin, 0)}</td>
+        <td><strong>${fmt(r.expected)}</strong></td>
+        <td style="color:var(--optimistic)">${fmt(r.optimistic)}</td>
+        <td style="color:var(--pessimistic)">${fmt(r.pessimistic)}</td>
+        <td style="font-family:var(--mono);font-size:0.8rem">${fmt(r.a1)} / ${fmt(r.a2)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  updateForecastChart(rows);
+}
+
+function updateForecastChart(rows) {
+  const labels = rows.map((r) => r.date);
+  const expected = rows.map((r) => r.expected);
+  const optimistic = rows.map((r) => r.optimistic);
+  const pessimistic = rows.map((r) => r.pessimistic);
+  // Range height for floating bar: [pess, opt]
+  const range = rows.map((r) =>
+    r.pessimistic != null && r.optimistic != null
+      ? [r.pessimistic, r.optimistic]
+      : [null, null]
+  );
+
+  const barColors = rows.map((r) =>
+    r.confidence === "high" ? "rgba(63, 185, 80, 0.7)" : "rgba(63, 185, 80, 0.35)"
+  );
+  const barBorders = rows.map((r) =>
+    r.confidence === "high" ? CONFIG.COLOR_TOTAL : "rgba(63, 185, 80, 0.6)"
+  );
+
+  const datasets = [
+    {
+      type: "bar",
+      label: "Expected kWh (corrected)",
+      data: expected,
+      backgroundColor: barColors,
+      borderColor: barBorders,
+      borderWidth: 1.5,
+      borderRadius: 4,
+      order: 2,
+    },
+    {
+      type: "bar",
+      label: "Optimistic ↔ Pessimistic range",
+      data: range,
+      backgroundColor: rows.map((r) =>
+        r.confidence === "high"
+          ? "rgba(88, 166, 255, 0.18)"
+          : "rgba(139, 148, 158, 0.18)"
+      ),
+      borderColor: rows.map((r) =>
+        r.confidence === "high" ? "rgba(88, 166, 255, 0.5)" : "rgba(139, 148, 158, 0.4)"
+      ),
+      borderWidth: 1,
+      borderRadius: 3,
+      order: 3,
+      barPercentage: 0.45,
+      categoryPercentage: 0.7,
+    },
+    {
+      type: "line",
+      label: "Optimistic",
+      data: optimistic,
+      borderColor: "rgba(63, 185, 80, 0.5)",
+      borderDash: [4, 4],
+      pointRadius: 0,
+      borderWidth: 1.5,
+      order: 1,
+    },
+    {
+      type: "line",
+      label: "Pessimistic",
+      data: pessimistic,
+      borderColor: "rgba(248, 81, 73, 0.5)",
+      borderDash: [4, 4],
+      pointRadius: 0,
+      borderWidth: 1.5,
+      order: 1,
+    },
+  ];
+
+  const ctx = $("forecastChart").getContext("2d");
+  if (state.forecastChart) {
+    state.forecastChart.data.labels = labels;
+    state.forecastChart.data.datasets = datasets;
+    state.forecastChart.update();
+    return;
+  }
+
+  state.forecastChart = new Chart(ctx, {
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: "#8b949e", boxWidth: 12, padding: 12 },
+        },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              const i = items[0]?.dataIndex;
+              if (i == null || !rows[i]) return "";
+              const r = rows[i];
+              return r.confidence === "high"
+                ? "Confidence: higher (days 1–3)"
+                : "Confidence: lower (days 4–7)";
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: "#8b949e", maxRotation: 40 },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+        },
+        y: {
+          title: { display: true, text: "kWh (system total)", color: "#8b949e" },
+          ticks: { color: "#8b949e" },
+          grid: { color: "rgba(48, 54, 61, 0.6)" },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================================
+ * RENDER: CORRECTION + SYSTEM
+ * ========================================================================== */
+function renderCorrection() {
+  const f = state.correctionFactor;
+  $("correctionValue").textContent = fmt(f, 3) + "×";
+  $("sysCorr").textContent = fmt(f, 3) + "×";
+  $("sysCalibN").textContent = String(state.calibDaysUsed);
+
+  let detail;
+  if (!state.rows.length) {
+    detail =
+      "Load CSV history to calibrate the model against non-CV days. " +
+      "Forecast currently uses base physics only (correction = 1.00×).";
+  } else if (!state.weather) {
+    detail =
+      "CSV loaded, but weather is unavailable — cannot compute actual/modeled ratios yet. " +
+      "Forecast will recalibrate when GHI history is available.";
+  } else if (state.calibDaysUsed === 0) {
+    detail =
+      "No overlapping non-CV days with weather GHI found. " +
+      "Need recent free-collection days that fall within the weather history window. " +
+      "Correction stays at 1.00×.";
+  } else {
+    const pct = (f - 1) * 100;
+    const direction =
+      Math.abs(pct) < 2
+        ? "closely matches base physics"
+        : pct > 0
+          ? `~${fmt(pct, 0)}% above base physics (arrays outperforming the simple model)`
+          : `~${fmt(Math.abs(pct), 0)}% below base physics (model was optimistic)`;
+    detail =
+      `Calibrated from ${state.calibDaysUsed} free-collection (non-CV) day(s) with weather overlap. ` +
+      `Weighted toward the most recent 3 free days. Your system ${direction}. ` +
+      `This factor is applied to the 7-day forecast and to CV-day potential estimates. ` +
+      `CV days (float mode) are excluded from calibration because recorded kWh is a lower bound.`;
+  }
+  $("correctionDetail").textContent = detail;
+}
+
+function renderSystemConstants() {
+  $("sysLat").textContent = String(CONFIG.LAT);
+  $("sysLon").textContent = String(CONFIG.LON);
+  $("sysEff").textContent = String(CONFIG.SYSTEM_EFFICIENCY);
+  $("sysEast").textContent = String(CONFIG.EAST_15_DERATE);
+  $("sysWest").textContent = String(CONFIG.WEST_35_DERATE);
+}
+
+/* ============================================================================
+ * RECOMPUTE PIPELINE
+ * ========================================================================== */
+function recomputeAndRender() {
+  if (state.rows.length && state.weather) {
+    const cal = computeCorrectionFactor(state.rows, state.weather);
+    state.correctionFactor = cal.factor;
+    state.calibDaysUsed = cal.n;
+    state.calibRatios = cal.ratios;
+    // After correction is known, annotate CV days with model potential / forgone
+    applyCvPotential(state.rows, state.weather, state.correctionFactor);
+  } else if (!state.rows.length) {
+    state.correctionFactor = 1.0;
+    state.calibDaysUsed = 0;
+    state.calibRatios = [];
+  } else {
+    // CSV only — clear potential annotations until weather arrives
+    applyCvPotential(state.rows, null, state.correctionFactor);
+  }
+
+  renderCorrection();
+  renderHistory();
+  if (state.weather) renderForecast();
+}
+
+/* ============================================================================
+ * CSV LOAD HANDLERS
+ * ========================================================================== */
+function handleCsvFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const rows = parseCsv(String(reader.result));
+      state.rows = rows;
+      state.csvName = file.name;
+      $("csvFileName").textContent = file.name;
+      showBanner(
+        $("bannerInfo"),
+        `Loaded ${rows.length} day(s) from ${file.name}.`
+      );
+      setTimeout(() => showBanner($("bannerInfo"), ""), 3000);
+      recomputeAndRender();
+    } catch (err) {
+      showBanner($("bannerWarn"), `CSV error: ${err.message}`);
+    }
+  };
+  reader.onerror = () => {
+    showBanner($("bannerWarn"), "Could not read the selected file.");
+  };
+  reader.readAsText(file);
+}
+
+/* ============================================================================
+ * INIT
+ * ========================================================================== */
+function init() {
+  renderSystemConstants();
+  renderCorrection();
+  renderHistory();
+  renderForecastEmpty("Fetching weather from Open-Meteo…");
+
+  $("btnLoadCsv").addEventListener("click", () => $("fileInput").click());
+  $("fileInput").addEventListener("change", (e) => {
+    const f = e.target.files?.[0];
+    handleCsvFile(f);
+    // allow re-selecting same file
+    e.target.value = "";
+  });
+  $("btnReloadWeather").addEventListener("click", () => loadWeather({ force: true }));
+
+  // Try cache immediately for offline-first paint, then refresh live
+  const cached = loadCachedWeather();
+  if (cached) {
+    state.weather = cached;
+    state.weatherFromCache = true;
+    const when = cached._fetchedAt
+      ? new Date(cached._fetchedAt).toLocaleString()
+      : "unknown";
+    $("lastWeatherFetch").textContent = when + " (cached)";
+    recomputeAndRender();
+  }
+
+  loadWeather();
+}
+
+// Chart.js floating bars need this for [min,max] data
+// (built into Chart.js 3+ bar charts)
+
+init();
+</script>
+</body>
+</html>
