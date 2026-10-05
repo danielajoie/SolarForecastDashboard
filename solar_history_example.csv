@@ -1,15 +1,16 @@
-date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes
-2026-07-12,28,0.37,N,na
-2026-07-13,30.3,3.5,N,na
-2026-07-14,31.8,3.6,N,forest fire smoke
-2026-07-15,32.5,4.5,N,forest fire smoke
-2026-07-16,34.7,6.3,N,na
-2026-07-17,36.3,8.2,Y,na
-2026-07-18,37.6,9.3,N,na
-2026-07-19,39.7,12.2,Y,na
-2026-07-20,41.4,14.6,Y,na
-2026-07-21,42.9,15.7,N,na
-2026-07-22,43.9,16.9,Y,na
-2026-07-23,46.1,19.8,Y,na
-2026-07-24,47.5,21.4,Y,na
-2026-07-25,49.0,23.3,Y,na
+date,cum_kwh_array1,cv_flag,notes
+2026-06-01,6.00,N,baseline
+2026-06-02,9.10,N,clear
+2026-06-03,11.50,N,partly cloudy
+2026-06-04,12.70,N,overcast
+2026-06-05,16.10,N,clear
+2026-06-06,17.60,Y,batteries full by afternoon
+2026-06-07,20.20,N,hazy
+2026-06-08,23.50,N,clear
+2026-06-09,24.30,N,rain
+2026-06-10,27.10,N,clearing
+2026-06-11,28.80,Y,float most of afternoon
+2026-06-12,32.40,N,excellent sun
+2026-06-13,34.90,N,partly cloudy
+2026-06-14,36.50,Y,batteries full by noon
+2026-06-15,39.70,N,clear

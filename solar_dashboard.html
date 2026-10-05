@@ -3,18 +3,19 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Cabin Solar – Wellfleet</title>
+<title>Solar Forecast Dashboard</title>
 <!--
 ================================================================================
-  CABIN SOLAR DASHBOARD – Wellfleet, MA
+  SOLAR FORECAST DASHBOARD
 ================================================================================
   USAGE
   -----
   1. Open this file in any modern browser (Chrome, Edge, Firefox, Safari).
      No server or install required.
 
-  2. Click ⚙ Settings to set location and solar arrays (name, watts, tilt,
-     facing). Configuration is saved to localStorage and restored on load.
+  2. Click ⚙ Settings to set location (US ZIP lookup or manual lat/lon) and
+     solar arrays (name, watts, tilt, facing). Configuration is saved to
+     localStorage and restored on load.
 
   3. CSV format (CUMULATIVE totals — not daily production):
        date,cum_kwh_array1,cum_kwh_array2,...,cum_kwh_arrayN,cv_flag,notes
@@ -23,19 +24,11 @@
        but a lower bound). N = free collection.
      - Daily = current_cum − previous_cum; first row is baseline only (no daily).
 
-  4. Load a CSV via “Load CSV”, or enter readings in “Add Daily Reading”.
+  4. First open loads built-in synthetic sample data. Use “Load sample data”
+     to restore it, “Load CSV” for your own file, or “Add Daily Reading”.
      Download the full dataset anytime with “Download Updated CSV”.
 
   5. Weather/forecast: Open-Meteo (no API key). Calibration uses non-CV days only.
-
-  SAMPLE CSV (2-array default)
-  ----------------------------
-  date,cum_kwh_array1,cum_kwh_array2,cv_flag,notes
-  2026-07-08,2.85,3.41,N,clear
-  2026-07-09,4.97,6.09,N,partly cloudy
-  2026-07-10,8.02,9.81,N,excellent sun
-  2026-07-11,9.50,11.76,Y,batteries full by noon
-  2026-07-12,12.41,15.31,N,clear
 ================================================================================
 -->
 <style>
@@ -512,6 +505,25 @@
 
   .form-field.checkbox-field input { width: auto; }
 
+  .zip-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.75rem;
+    align-items: end;
+  }
+
+  .zip-row .btn { height: 2.35rem; white-space: nowrap; }
+
+  .zip-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0.4rem 0 0.85rem;
+    min-height: 1.2em;
+  }
+
+  .zip-hint.ok { color: var(--accent); }
+  .zip-hint.err { color: var(--danger); }
+
   .form-actions {
     display: flex;
     flex-wrap: wrap;
@@ -644,9 +656,10 @@
 
   <header>
     <div>
-      <h1>Cabin Solar <span>– Wellfleet</span></h1>
+      <h1>Solar Forecast <span>Dashboard</span></h1>
       <div class="actions">
         <button type="button" class="btn btn-primary" id="btnLoadCsv">Load CSV</button>
+        <button type="button" class="btn" id="btnLoadSample">Load sample data</button>
         <button type="button" class="btn" id="btnDownloadCsv">Download Updated CSV</button>
         <button type="button" class="btn" id="btnReloadWeather">Refresh weather</button>
         <button type="button" class="btn" id="btnSettings" title="Settings">⚙ Settings</button>
@@ -804,6 +817,7 @@
         <div class="sys-card">
           <h3>Site &amp; arrays</h3>
           <dl id="sysSiteDl">
+            <dt>ZIP</dt><dd id="sysZip">—</dd>
             <dt>Latitude</dt><dd id="sysLat">—</dd>
             <dt>Longitude</dt><dd id="sysLon">—</dd>
             <dt>Arrays</dt><dd id="sysArrayCount">—</dd>
@@ -857,6 +871,15 @@
     <div class="modal-body">
       <div class="modal-section">
         <h3>Location</h3>
+        <div class="zip-row">
+          <div class="form-field">
+            <label for="cfgZip">US ZIP code (optional)</label>
+            <input type="text" id="cfgZip" inputmode="numeric" maxlength="10"
+              placeholder="e.g. 01002" autocomplete="postal-code" />
+          </div>
+          <button type="button" class="btn" id="btnLookupZip">Lookup</button>
+        </div>
+        <p class="zip-hint" id="cfgZipHint">Lookup fills latitude and longitude. You can also enter coordinates directly.</p>
         <div class="form-grid">
           <div class="form-field">
             <label for="cfgLat">Latitude</label>
@@ -894,15 +917,14 @@
  * Runtime location/arrays live in `settings` (localStorage-backed).
  * ========================================================================== */
 const CONFIG = {
-  // ---- Default location (Wellfleet, MA) ----
-  DEFAULT_LAT: 41.9375,
-  DEFAULT_LON: -70.0333,
+  // ---- Default location (generic example site) ----
+  DEFAULT_LAT: 42.5,
+  DEFAULT_LON: -72.5,
   TIMEZONE: "America/New_York",
 
   // ---- Default arrays (used when nothing in localStorage) ----
   DEFAULT_ARRAYS: [
-    { id: "arr_east", name: "East Array", watts: 500, tilt: 15, azimuth: "East", derate: 0.90 },
-    { id: "arr_west", name: "West Array", watts: 600, tilt: 35, azimuth: "West", derate: 0.93 },
+    { id: "arr_1", name: "Array 1", watts: 600, tilt: 30, azimuth: "South", derate: 0.95 },
   ],
 
   // ---- Physics ----
@@ -919,15 +941,16 @@ const CONFIG = {
   FORECAST_DAYS: 7,
   FORECAST_API: "https://api.open-meteo.com/v1/forecast",
   ARCHIVE_API: "https://archive-api.open-meteo.com/v1/archive",
+  ZIP_API: "https://api.zippopotam.us/us/",
 
   // ---- Cumulative → daily ----
   // First CSV row is baseline only (no daily). Negative deltas clamped to floor.
   NEGATIVE_DAILY_FLOOR: 0,
 
   // ---- localStorage keys ----
-  LS_SETTINGS: "cabinSolar_settings_v2",
-  LS_DATASET: "cabinSolar_dataset_v2",
-  LS_WEATHER: "cabinSolar_weatherCache_v1",
+  LS_SETTINGS: "cabinSolar_settings_v5",
+  LS_DATASET: "cabinSolar_dataset_v4",
+  LS_WEATHER: "cabinSolar_weatherCache_v3",
 
   // ---- Chart palette (cycles for N arrays) ----
   ARRAY_COLORS: [
@@ -939,10 +962,30 @@ const CONFIG = {
   COLOR_CV: "#f0883e",
 };
 
+/** Built-in synthetic history for first-open / “Load sample data”. */
+const SAMPLE_CSV = [
+  "date,cum_kwh_array1,cv_flag,notes",
+  "2026-06-01,6.00,N,baseline",
+  "2026-06-02,9.10,N,clear",
+  "2026-06-03,11.50,N,partly cloudy",
+  "2026-06-04,12.70,N,overcast",
+  "2026-06-05,16.10,N,clear",
+  "2026-06-06,17.60,Y,batteries full by afternoon",
+  "2026-06-07,20.20,N,hazy",
+  "2026-06-08,23.50,N,clear",
+  "2026-06-09,24.30,N,rain",
+  "2026-06-10,27.10,N,clearing",
+  "2026-06-11,28.80,Y,float most of afternoon",
+  "2026-06-12,32.40,N,excellent sun",
+  "2026-06-13,34.90,N,partly cloudy",
+  "2026-06-14,36.50,Y,batteries full by noon",
+  "2026-06-15,39.70,N,clear",
+].join("\n");
+
 /* ============================================================================
  * RUNTIME STATE
  * ========================================================================== */
-/** @type {{ lat: number, lon: number, arrays: Array<{id:string,name:string,watts:number,tilt:number,azimuth:string,derate?:number|null}> }} */
+/** @type {{ lat: number, lon: number, zip?: string, arrays: Array<{id:string,name:string,watts:number,tilt:number,azimuth:string,derate?:number|null}> }} */
 let settings = loadSettings();
 
 const state = {
@@ -970,6 +1013,7 @@ function defaultSettings() {
   return {
     lat: CONFIG.DEFAULT_LAT,
     lon: CONFIG.DEFAULT_LON,
+    zip: "",
     arrays: CONFIG.DEFAULT_ARRAYS.map((a) => ({ ...a, id: a.id || uid() })),
   };
 }
@@ -985,6 +1029,7 @@ function loadSettings() {
     return {
       lat: Number(parsed.lat) || CONFIG.DEFAULT_LAT,
       lon: Number(parsed.lon) || CONFIG.DEFAULT_LON,
+      zip: parsed.zip ? String(parsed.zip) : "",
       arrays: parsed.arrays.map((a) => ({
         id: a.id || uid(),
         name: String(a.name || "Array"),
@@ -1075,7 +1120,7 @@ function parseAzimuth(az) {
 /**
  * Orientation derate vs simple GHI × nameplate.
  * Uses stored array.derate if set; otherwise estimates from tilt + facing.
- * Defaults were tuned so East 15° ≈ 0.90 and West 35° ≈ 0.93 at Wellfleet.
+ * Defaults were tuned so East 15° ≈ 0.90 and West 35° ≈ 0.93 at mid-latitudes.
  */
 function orientDerate(array) {
   if (array.derate != null && !Number.isNaN(Number(array.derate)) && Number(array.derate) > 0) {
@@ -2122,6 +2167,7 @@ function updateForecastChart(rows) {
  * RENDER: SYSTEM / CORRECTION / HEADER
  * ========================================================================== */
 function renderSystemSummary() {
+  $("sysZip").textContent = settings.zip ? String(settings.zip) : "—";
   $("sysLat").textContent = String(settings.lat);
   $("sysLon").textContent = String(settings.lon);
   $("sysArrayCount").textContent = String(arrayCount());
@@ -2208,9 +2254,67 @@ function recomputeAndRender() {
  * ========================================================================== */
 let draftArrays = [];
 
+function setZipHint(msg, kind) {
+  const el = $("cfgZipHint");
+  el.textContent = msg || "Lookup fills latitude and longitude. You can also enter coordinates directly.";
+  el.classList.remove("ok", "err");
+  if (kind) el.classList.add(kind);
+}
+
+/** Accept 5-digit ZIP or ZIP+4; return 5-digit string or null. */
+function normalizeUsZip(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length < 5) return null;
+  return digits.slice(0, 5);
+}
+
+async function lookupZip() {
+  const err = $("settingsError");
+  err.classList.remove("show");
+  const zip = normalizeUsZip($("cfgZip").value);
+  if (!zip) {
+    setZipHint("Enter a 5-digit US ZIP code, or type latitude and longitude below.", "err");
+    return;
+  }
+  $("cfgZip").value = zip;
+  const btn = $("btnLookupZip");
+  btn.disabled = true;
+  setZipHint("Looking up " + zip + "…");
+  try {
+    const res = await fetch(CONFIG.ZIP_API + encodeURIComponent(zip));
+    if (res.status === 404) {
+      setZipHint("ZIP " + zip + " not found. Enter latitude and longitude below.", "err");
+      return;
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const place = data.places && data.places[0];
+    if (!place) {
+      setZipHint("No coordinates for that ZIP. Enter latitude and longitude below.", "err");
+      return;
+    }
+    const lat = parseFloat(place.latitude);
+    const lon = parseFloat(place.longitude);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      setZipHint("No coordinates for that ZIP. Enter latitude and longitude below.", "err");
+      return;
+    }
+    $("cfgLat").value = lat;
+    $("cfgLon").value = lon;
+    const name = [place["place name"], place["state abbreviation"]].filter(Boolean).join(", ");
+    setZipHint("Filled " + name + " (" + lat + ", " + lon + "). You can still edit coordinates.", "ok");
+  } catch (e) {
+    setZipHint("ZIP lookup failed. Enter latitude and longitude below.", "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function openSettings() {
+  $("cfgZip").value = settings.zip || "";
   $("cfgLat").value = settings.lat;
   $("cfgLon").value = settings.lon;
+  setZipHint("");
   draftArrays = settings.arrays.map((a) => ({ ...a }));
   renderArrayEditors();
   $("settingsError").classList.remove("show");
@@ -2329,6 +2433,7 @@ function saveSettingsFromModal() {
   settings = {
     lat,
     lon,
+    zip: normalizeUsZip($("cfgZip").value) || "",
     arrays: draftArrays.map((a) => ({ ...a })),
   };
   saveSettings(settings);
@@ -2387,6 +2492,21 @@ function handleCsvFile(file) {
   reader.readAsText(file);
 }
 
+function applySampleData({ announce = true } = {}) {
+  const rows = parseCsv(SAMPLE_CSV);
+  state.rows = rows;
+  state.csvName = "sample_data.csv";
+  state.dataSource = "sample";
+  $("csvFileName").textContent = "sample data";
+  saveDataset();
+  if (announce) {
+    showBanner($("bannerInfo"), `Loaded sample data (${rows.length} days).`);
+    setTimeout(() => showBanner($("bannerInfo"), ""), 3000);
+  }
+  recomputeAndRender();
+  renderEntryForm();
+}
+
 function restoreDatasetIfAny() {
   const data = loadDatasetFromStorage();
   if (!data) return;
@@ -2423,6 +2543,10 @@ function init() {
   renderForecastEmpty("Fetching weather from Open-Meteo…");
 
   $("btnLoadCsv").addEventListener("click", () => $("fileInput").click());
+  $("btnLoadSample").addEventListener("click", () => {
+    if (state.rows.length && !confirm("Replace current readings with the built-in sample dataset?")) return;
+    applySampleData();
+  });
   $("fileInput").addEventListener("change", (e) => {
     handleCsvFile(e.target.files?.[0]);
     e.target.value = "";
@@ -2434,6 +2558,13 @@ function init() {
   $("btnCloseSettings").addEventListener("click", closeSettings);
   $("btnCancelSettings").addEventListener("click", closeSettings);
   $("btnSaveSettings").addEventListener("click", saveSettingsFromModal);
+  $("btnLookupZip").addEventListener("click", lookupZip);
+  $("cfgZip").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      lookupZip();
+    }
+  });
   $("btnAddArray").addEventListener("click", () => {
     syncDraftFromDom();
     draftArrays.push({
@@ -2447,10 +2578,12 @@ function init() {
     renderArrayEditors();
   });
   $("btnResetSettings").addEventListener("click", () => {
-    if (!confirm("Reset location and arrays to Wellfleet defaults?")) return;
+    if (!confirm("Reset location and arrays to example defaults?")) return;
     draftArrays = defaultSettings().arrays.map((a) => ({ ...a }));
+    $("cfgZip").value = "";
     $("cfgLat").value = CONFIG.DEFAULT_LAT;
     $("cfgLon").value = CONFIG.DEFAULT_LON;
+    setZipHint("");
     renderArrayEditors();
   });
   $("settingsModal").addEventListener("click", (e) => {
@@ -2472,6 +2605,7 @@ function init() {
   });
 
   restoreDatasetIfAny();
+  if (!state.rows.length) applySampleData({ announce: true });
   recomputeAndRender();
 
   const cached = loadCachedWeather();
