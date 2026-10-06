@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Solar Forecast Dashboard</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <!--
 ================================================================================
   SOLAR FORECAST DASHBOARD
@@ -21,7 +22,7 @@
      - cum_kwh_array2:   lifetime/running kWh from the 600 W west array
      - cv_flag:          Y = battery bank was ≳90% full → MPPTs in constant-voltage
                          (float) mode. Recorded kWh is real energy harvested that day
-                         (roughly matching cabin loads) but is a lower bound: more could
+                         (roughly matching site loads) but is a lower bound: more could
                          have been collected if the battery had headroom. N = free
                          collection (not capacity-constrained).
      - notes:            free-text (optional); e.g. weather or site notes
@@ -600,7 +601,7 @@
       <div class="note" id="cvImpactNote">
         <strong>CV = Y (capacity-constrained):</strong> Battery bank ≳90% full — MPPTs in
         constant-voltage / float mode. Recorded kWh is real energy harvested (roughly what
-        cabin loads used) but is a lower bound; more could have been collected with free
+        site loads used) but is a lower bound; more could have been collected with free
         battery headroom. Non-CV days calibrate the forecast; CV days show model potential.
       </div>
     </div>
@@ -726,7 +727,9 @@
   </footer>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js"
+  integrity="sha384-zYPBGXwO4633CABX/5Spf6emCKUJCfoOkhOMYyxMsatqQZPnDblmmOewfjsIVWCM"
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 /* ============================================================================
  * CONFIG — all tunable constants live here. Edit freely.
@@ -768,8 +771,8 @@ const CONFIG = {
   ARCHIVE_API: "https://archive-api.open-meteo.com/v1/archive",
 
   // ---- localStorage keys ----
-  LS_WEATHER: "cabinSolar_weatherCache_v3",
-  LS_CSV_META: "cabinSolar_csvMeta_v2",
+  LS_WEATHER: "solarDash_weatherCache_v3",
+  LS_CSV_META: "solarDash_csvMeta_v2",
 
   // ---- CSV cumulative → daily derivation ----
   // Daily is always (current_cum − previous_cum). The first CSV row has no previous
@@ -1359,7 +1362,7 @@ function renderHistory() {
   const cvRows = rows.filter((r) => r.cv && r.hasDaily && r.total != null);
   let impactHtml =
     "<strong>CV = Y (capacity-constrained):</strong> Battery ≳90% full — MPPTs in constant-voltage / float mode. " +
-    "Recorded kWh is real harvested energy (often ≈ cabin load) but is a <em>lower bound</em> " +
+    "Recorded kWh is real harvested energy (often ≈ site load) but is a <em>lower bound</em> " +
     "(actual ≥ recorded). More could have been collected with free battery headroom. " +
     "Non-CV days calibrate the forecast; CV days show weather-model potential when GHI is available. " +
     "Daily kWh = current cumulative − previous cumulative.";
