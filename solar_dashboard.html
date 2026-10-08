@@ -778,9 +778,44 @@
   #syncChoiceModal .modal-body p { font-size: 0.9rem; margin-bottom: 0.7rem; }
   #syncChoiceModal .modal-body ul { font-size: 0.88rem; margin: 0 0 0.8rem 1.2rem; color: var(--text-muted); }
 
+  /* ---- Delete account ---- */
+  .btn-danger-solid {
+    background: #da3633;
+    border-color: var(--danger);
+    color: #fff;
+  }
+  .btn-danger-solid:hover { background: #f85149; border-color: #ff7b72; }
+  .btn-danger-solid:disabled,
+  .btn-danger-solid:disabled:hover { background: rgba(218, 54, 51, 0.35); border-color: rgba(248, 81, 73, 0.4); color: rgba(255, 255, 255, 0.7); cursor: not-allowed; transform: none; }
+  .account-who .btn-danger { margin-left: auto; }
+  .settings-account p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.6rem; }
+  #deleteAccountModal .modal { max-width: min(500px, 100%); border-color: rgba(248, 81, 73, 0.5); }
+  #deleteAccountModal .modal-body p { font-size: 0.9rem; margin-bottom: 0.7rem; }
+  #deleteAccountModal .modal-body ul { font-size: 0.9rem; margin: 0 0 0.8rem 1.2rem; }
+  #deleteAccountModal .del-warn { color: #ff7b72; font-weight: 600; }
+  #deleteAccountWho, #settingsAcctWho { overflow-wrap: anywhere; }
+  #deleteAccountModal .del-muted { color: var(--text-muted); font-size: 0.85rem; }
+  .del-check {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+    font-size: 0.88rem;
+    padding: 0.6rem 0.7rem;
+    margin: 0.2rem 0 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    cursor: pointer;
+  }
+  .del-check input { margin-top: 0.2rem; width: 1rem; height: 1rem; flex-shrink: 0; accent-color: #da3633; }
+  .del-check small { display: block; color: var(--text-muted); font-size: 0.8rem; margin-top: 0.15rem; }
+  #deleteAccountModal .form-field input { text-transform: none; letter-spacing: 0.04em; }
+  #deleteAccountModal .form-error { margin-top: 0.7rem; }
+
   @media (max-width: 600px) {
     .account-bar { padding: 0.6rem 0.7rem; }
     .account-form .btn { flex: 1 1 auto; }
+    .account-who .btn-danger { margin-left: 0; }
   }
 
   @media (max-width: 600px) {
@@ -834,6 +869,8 @@
       <span class="sync-status" id="syncStatus" role="status" aria-live="polite">Loading…</span>
       <button type="button" class="btn btn-sm" id="btnSyncRetry" hidden>Retry</button>
       <button type="button" class="btn btn-sm" id="btnSignOut">Sign out</button>
+      <button type="button" class="btn btn-sm btn-danger" id="btnDeleteAccount"
+        aria-haspopup="dialog">Delete account</button>
     </div>
     <p class="account-msg" id="accountMsg">
       Optional: sign in to save your settings and readings to your account and use them on any device.
@@ -1063,6 +1100,13 @@
         <div id="arrayEditors"></div>
         <button type="button" class="btn btn-sm" id="btnAddArray">+ Add Array</button>
       </div>
+      <div class="modal-section settings-account" id="settingsAccount" hidden>
+        <h3>Account</h3>
+        <p>Signed in as <strong id="settingsAcctWho"></strong>. Deleting your account permanently
+          removes the cloud copy of your settings and readings and your sign-in account.</p>
+        <button type="button" class="btn btn-sm btn-danger" id="btnDeleteAccountSettings"
+          aria-haspopup="dialog">Delete account…</button>
+      </div>
       <p style="font-size:0.8rem;color:var(--text-muted)">
         CSV columns follow array order: cum_kwh_array1, cum_kwh_array2, …
         Changing array count may require remapping existing readings.
@@ -1092,6 +1136,45 @@
     <div class="modal-footer">
       <button type="button" class="btn" id="btnSyncFresh">Start fresh</button>
       <button type="button" class="btn btn-primary" id="btnSyncUpload">Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DELETE ACCOUNT (signed in only) ========== -->
+<div class="modal-backdrop" id="deleteAccountModal" role="dialog" aria-modal="true"
+  aria-labelledby="deleteAccountTitle" aria-describedby="deleteAccountDesc">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="deleteAccountTitle">Delete your account?</h2>
+      <button type="button" class="modal-close" id="btnCloseDeleteAccount" aria-label="Close">&times;</button>
+    </div>
+    <form class="modal-body" id="deleteAccountForm" novalidate>
+      <div id="deleteAccountDesc">
+        <p>This permanently deletes, for <strong id="deleteAccountWho"></strong>:</p>
+        <ul>
+          <li>the cloud copy of your settings and readings</li>
+          <li>your sign-in account</li>
+        </ul>
+        <p class="del-warn">This can’t be undone.</p>
+        <p class="del-muted">You’ll be signed out. If you sign in again later with the same email,
+          you’ll start a new, empty account. Data saved in this browser is kept unless you tick the box below.</p>
+      </div>
+      <label class="del-check" for="deleteAccountClearLocal">
+        <input type="checkbox" id="deleteAccountClearLocal" />
+        <span>Also clear data saved in this browser
+          <small>Removes this browser’s settings, readings, and cached weather, and resets the dashboard to the example defaults.</small>
+        </span>
+      </label>
+      <div class="form-field">
+        <label for="deleteAccountConfirm">Type <strong>DELETE</strong> to confirm</label>
+        <input type="text" id="deleteAccountConfirm" autocomplete="off" autocapitalize="characters"
+          spellcheck="false" inputmode="text" aria-describedby="deleteAccountError" />
+      </div>
+      <div class="form-error" id="deleteAccountError" role="alert"></div>
+    </form>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="btnCancelDeleteAccount">Cancel</button>
+      <button type="submit" form="deleteAccountForm" class="btn btn-danger-solid" id="btnConfirmDeleteAccount" disabled>Delete account permanently</button>
     </div>
   </div>
 </div>
@@ -2771,6 +2854,14 @@ function applyDatasetPayload(data, labelSuffix, source) {
  * Concurrency: last write wins (two tabs/devices editing at once can
  * overwrite each other's most recent change).
  *
+ * Delete account: "Delete account" (account bar, and Settings > Account)
+ * opens a confirm dialog. On confirm, pending syncs are cancelled, then
+ * supabase.rpc("delete_my_account") runs. That Postgres function
+ * (SECURITY DEFINER, migration add_delete_my_account_rpc) deletes ONLY the
+ * caller's (auth.uid()) user_settings row and auth user. Then the local
+ * session is dropped and the page falls back to this browser's data, which
+ * is kept unless "Also clear data saved in this browser" was ticked.
+ *
  * Keys: only the project URL and the publishable (client) key belong here.
  * Row-level security limits each signed-in user to their own row.
  * NEVER put a service_role / secret key in this file.
@@ -2935,13 +3026,15 @@ const Cloud = {
   timer: null,
   applying: false,
   cooldownTimer: null,
+  deleting: false,
+  deleteReturnFocus: null,
 
   /** True when the account row is the store (localStorage writes are skipped). */
   isActive() { return this.mode === "active"; },
 
   /** Called by saveSettings()/saveDataset() after every change. */
   noteChange() {
-    if (this.mode !== "active" || this.applying) return;
+    if (this.mode !== "active" || this.applying || this.deleting) return;
     this.dirty = true;
     this.setStatus("saving");
     clearTimeout(this.timer);
@@ -2951,7 +3044,7 @@ const Cloud = {
   async flush() {
     clearTimeout(this.timer);
     this.timer = null;
-    if (this.mode !== "active" || !this.dirty || !this.user) return;
+    if (this.mode !== "active" || !this.dirty || !this.user || this.deleting) return;
     if (this.inFlight) { this.timer = setTimeout(() => this.flush(), 300); return; }
     const userId = this.user.id;
     const row = { user_id: userId, ...toCloudRow(settings, state) };
@@ -3007,6 +3100,9 @@ const Cloud = {
     $("accountSignedOut").hidden = signedIn;
     $("accountSignedIn").hidden = !signedIn;
     if (signedIn) $("acctWho").textContent = this.user.email || "your account";
+    $("settingsAccount").hidden = !signedIn;
+    if (signedIn) $("settingsAcctWho").textContent = this.user.email || "your account";
+    if (!signedIn && $("deleteAccountModal").classList.contains("open") && !this.deleting) this.closeDelete();
   },
 
   disable(reason) {
@@ -3021,6 +3117,22 @@ const Cloud = {
     $("btnSyncRetry").addEventListener("click", () => this.retry());
     $("btnSyncUpload").addEventListener("click", () => this.chooseUpload());
     $("btnSyncFresh").addEventListener("click", () => this.chooseFresh());
+    $("btnDeleteAccount").addEventListener("click", () => this.openDelete($("btnDeleteAccount")));
+    $("btnDeleteAccountSettings").addEventListener("click", () => {
+      closeSettings();
+      this.openDelete($("btnDeleteAccount"));
+    });
+    $("btnCancelDeleteAccount").addEventListener("click", () => this.closeDelete());
+    $("btnCloseDeleteAccount").addEventListener("click", () => this.closeDelete());
+    $("deleteAccountConfirm").addEventListener("input", () => this.updateDeleteButton());
+    $("deleteAccountForm").addEventListener("submit", (e) => { e.preventDefault(); this.confirmDelete(); });
+    $("deleteAccountModal").addEventListener("click", (e) => {
+      if (e.target === $("deleteAccountModal")) this.closeDelete();
+    });
+    $("deleteAccountModal").addEventListener("keydown", (e) => this.trapDeleteKeys(e));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && $("deleteAccountModal").classList.contains("open")) this.closeDelete();
+    });
     window.addEventListener("online", () => { if (this.mode === "active" && this.dirty) this.flush(); });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden" && this.dirty) this.flush();
@@ -3214,8 +3326,145 @@ const Cloud = {
     this.setSignedInMsg();
   },
 
+  /* ---------- Delete account ---------- */
+
+  openDelete(returnFocus) {
+    if (!this.user || this.deleting) return;
+    this.deleteReturnFocus = returnFocus || null;
+    $("deleteAccountWho").textContent = this.user.email || "your account";
+    $("deleteAccountConfirm").value = "";
+    $("deleteAccountConfirm").disabled = false;
+    $("deleteAccountClearLocal").checked = false;
+    $("deleteAccountClearLocal").disabled = false;
+    $("btnCancelDeleteAccount").disabled = false;
+    this.setDeleteError("");
+    this.updateDeleteButton();
+    $("deleteAccountModal").classList.add("open");
+    $("deleteAccountConfirm").focus();
+  },
+
+  closeDelete() {
+    if (this.deleting) return; // can't cancel mid-request
+    const modal = $("deleteAccountModal");
+    if (!modal.classList.contains("open")) return;
+    modal.classList.remove("open");
+    const back = this.deleteReturnFocus;
+    this.deleteReturnFocus = null;
+    if (back && back.offsetParent !== null) back.focus();
+  },
+
+  isDeleteConfirmed() {
+    return $("deleteAccountConfirm").value.trim().toUpperCase() === "DELETE";
+  },
+
+  updateDeleteButton() {
+    const btn = $("btnConfirmDeleteAccount");
+    btn.disabled = this.deleting || !this.isDeleteConfirmed();
+    btn.textContent = this.deleting ? "Deleting…" : "Delete account permanently";
+  },
+
+  setDeleteError(text) {
+    const el = $("deleteAccountError");
+    el.textContent = text;
+    el.classList.toggle("show", !!text);
+  },
+
+  /** Escape closes; Tab / Shift+Tab stay inside the dialog. */
+  trapDeleteKeys(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeDelete();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const items = [...$("deleteAccountModal").querySelectorAll("button, input, [tabindex]:not([tabindex='-1'])")]
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  },
+
+  setDeleteBusy(busy) {
+    this.deleting = busy;
+    $("deleteAccountConfirm").disabled = busy;
+    $("deleteAccountClearLocal").disabled = busy;
+    $("btnCancelDeleteAccount").disabled = busy;
+    $("btnCloseDeleteAccount").disabled = busy;
+    this.updateDeleteButton();
+  },
+
+  /**
+   * Permanently delete the signed-in user's account (cloud row + auth user)
+   * via the delete_my_account() RPC. On failure the user stays signed in.
+   */
+  async confirmDelete() {
+    if (!this.client || !this.user || this.deleting || !this.isDeleteConfirmed()) return;
+    const clearLocal = $("deleteAccountClearLocal").checked;
+    const email = this.user.email || "your account";
+    this.setDeleteError("");
+    // 1) Stop syncing first so no debounced/in-flight upsert lands after the delete.
+    const wasDirty = this.dirty;
+    this.setDeleteBusy(true);
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.dirty = false;
+    while (this.inFlight) await new Promise((r) => setTimeout(r, 50));
+    // 2) Server side: deletes only auth.uid()'s row and auth user.
+    let error = null;
+    try {
+      ({ error } = await this.client.rpc("delete_my_account"));
+    } catch (e) {
+      error = e;
+    }
+    if (error) {
+      console.warn("Delete account failed", error);
+      this.setDeleteBusy(false);
+      const msg = (error && error.message) || String(error);
+      const offline = navigator.onLine === false || /fetch|network/i.test(msg);
+      this.setDeleteError(offline
+        ? "Couldn’t reach the server, so your account was not deleted. Check your connection and try again. You’re still signed in."
+        : "Couldn’t delete your account: " + msg + ". Nothing was deleted and you’re still signed in.");
+      this.setMsg("Account deletion failed. You’re still signed in.", "err");
+      $("deleteAccountConfirm").focus();
+      // Pending edits still belong to the (existing) account: save them.
+      if (wasDirty && this.mode === "active") { this.dirty = true; this.flush(); }
+      return;
+    }
+    // 3) The user (and its sessions) are gone server-side; drop the local session.
+    try {
+      const { error: soErr } = await this.client.auth.signOut({ scope: "local" });
+      if (soErr) throw soErr;
+    } catch (e) {
+      console.warn("Local sign-out after delete failed; removing stored session", e);
+      try {
+        Object.keys(localStorage)
+          .filter((k) => /^sb-.*-auth-token/.test(k))
+          .forEach((k) => localStorage.removeItem(k));
+      } catch { /* ignore */ }
+    }
+    // 4) Fall back to this browser's data (optionally cleared first).
+    if (clearLocal) {
+      try {
+        [CONFIG.LS_SETTINGS, CONFIG.LS_DATASET, CONFIG.LS_WEATHER].forEach((k) => localStorage.removeItem(k));
+      } catch { /* ignore */ }
+    }
+    this.setDeleteBusy(false);
+    $("deleteAccountModal").classList.remove("open");
+    this.deleteReturnFocus = null;
+    this.exitToLocal({ reload: clearLocal });
+    this.setMsg(clearLocal
+      ? "Your account (" + email + ") was permanently deleted, and this browser’s data was cleared. The dashboard is back to the example defaults."
+      : "Your account (" + email + ") was permanently deleted. Showing this browser’s data; it stays in this browser only.", "ok");
+    showBanner($("bannerInfo"), "Account deleted.");
+    setTimeout(() => showBanner($("bannerInfo"), ""), 4000);
+    $("acctEmail").focus();
+  },
+
   /** Back to signed-out behavior: stop syncing and reload this browser's local data. */
-  exitToLocal() {
+  exitToLocal({ reload = false } = {}) {
     clearTimeout(this.timer);
     this.timer = null;
     this.dirty = false;
@@ -3225,7 +3474,7 @@ const Cloud = {
     this.closeChoice();
     this.renderAccount();
     this.setMsg("Signed out. Showing this browser’s data; it stays in this browser only.");
-    if (!wasShowingCloud) return;
+    if (!wasShowingCloud && !reload) return;
     const prev = { lat: settings.lat, lon: settings.lon };
     settings = loadSettings();
     state.rows = [];
@@ -3236,7 +3485,7 @@ const Cloud = {
     if (!state.rows.length) applySampleData({ announce: false });
     renderEntryForm();
     recomputeAndRender();
-    if (prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
+    if (reload || prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
   },
 
   async signOut() {
