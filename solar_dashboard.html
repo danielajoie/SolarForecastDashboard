@@ -48,6 +48,11 @@
      Download the full dataset anytime with “Download Updated CSV”.
 
   5. Weather/forecast: Open-Meteo (no API key). Calibration uses non-CV days only.
+
+  6. Optional cloud sync: enter an email under “Cloud sync” to get a sign-in
+     link (Supabase). Signed in, settings + readings are saved to your account
+     and follow you across devices. Signed out, nothing leaves the browser
+     except the weather/ZIP lookups. See CLOUD SYNC in the script for details.
 ================================================================================
 -->
 <style>
@@ -678,6 +683,106 @@
 
   footer a { color: var(--array1); }
 
+  /* ---- Account / optional cloud sync ---- */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+
+  .account-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.65rem 0.9rem;
+    margin-bottom: 1rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    min-width: 0;
+  }
+
+  .account-bar [hidden] { display: none !important; }
+
+  .account-bar .acct-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .account-form,
+  .account-who {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.65rem;
+    flex: 1 1 300px;
+    min-width: 0;
+  }
+
+  .account-form input[type="email"] {
+    flex: 1 1 200px;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .account-form input[type="email"]:focus { outline: none; border-color: var(--array1); }
+  .account-form .btn:disabled { opacity: 0.6; cursor: default; }
+
+  .account-email { font-weight: 600; overflow-wrap: anywhere; }
+
+  .account-msg {
+    flex-basis: 100%;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .account-msg.ok { color: var(--accent); }
+  .account-msg.err { color: var(--danger); }
+
+  .sync-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.12rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .sync-status::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .sync-status.saved { color: var(--accent); border-color: var(--accent-dim); }
+  .sync-status.saving { color: var(--array1); border-color: #1f6feb; }
+  .sync-status.error { color: var(--warn); border-color: var(--warn); }
+
+  #syncChoiceModal .modal { max-width: min(480px, 100%); }
+  #syncChoiceModal .modal-body p { font-size: 0.9rem; margin-bottom: 0.7rem; }
+  #syncChoiceModal .modal-body ul { font-size: 0.88rem; margin: 0 0 0.8rem 1.2rem; color: var(--text-muted); }
+
+  @media (max-width: 600px) {
+    .account-bar { padding: 0.6rem 0.7rem; }
+    .account-form .btn { flex: 1 1 auto; }
+  }
+
   @media (max-width: 600px) {
     header h1 { font-size: 1.2rem; }
     .meta { text-align: left; }
@@ -714,6 +819,27 @@
       <div>Arrays: <strong id="arraySummary">—</strong></div>
     </div>
   </header>
+
+  <!-- ========== ACCOUNT / OPTIONAL CLOUD SYNC ========== -->
+  <section class="account-bar" id="accountBar" aria-label="Account and cloud sync">
+    <span class="acct-label">Cloud sync</span>
+    <form class="account-form" id="accountSignedOut" novalidate>
+      <label for="acctEmail" class="sr-only">Email address</label>
+      <input type="email" id="acctEmail" placeholder="you@example.com" autocomplete="email"
+        inputmode="email" required />
+      <button type="submit" class="btn btn-sm btn-primary" id="btnSendLink">Email me a sign-in link</button>
+    </form>
+    <div class="account-who" id="accountSignedIn" hidden>
+      <span>Signed in as <span class="account-email" id="acctWho"></span></span>
+      <span class="sync-status" id="syncStatus" role="status" aria-live="polite">Loading…</span>
+      <button type="button" class="btn btn-sm" id="btnSyncRetry" hidden>Retry</button>
+      <button type="button" class="btn btn-sm" id="btnSignOut">Sign out</button>
+    </div>
+    <p class="account-msg" id="accountMsg">
+      Optional: sign in to save your settings and readings to your account and use them on any device.
+      Signed out, everything stays in this browser.
+    </p>
+  </section>
 
   <div id="bannerWarn" class="banner banner-warn" role="status"></div>
   <div id="bannerInfo" class="banner banner-info" role="status"></div>
@@ -898,7 +1024,7 @@
 
   <footer>
     Weather via <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
-    · Charts via Chart.js · Config &amp; data stay in your browser (localStorage)
+    · Charts via Chart.js · Config &amp; data stay in your browser (localStorage) unless you sign in to sync
   </footer>
 </div>
 
@@ -951,8 +1077,31 @@
   </div>
 </div>
 
+<!-- ========== FIRST SIGN-IN: UPLOAD LOCAL DATA? ========== -->
+<div class="modal-backdrop" id="syncChoiceModal" role="dialog" aria-modal="true" aria-labelledby="syncChoiceTitle">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="syncChoiceTitle">Upload this browser’s data?</h2>
+    </div>
+    <div class="modal-body">
+      <p>Your account doesn’t have any saved data yet. This browser has:</p>
+      <ul id="syncChoiceSummary"></ul>
+      <p>Upload it to your account, or start fresh with the default example?
+        Either way, the copy in this browser is kept and comes back when you sign out.</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="btnSyncFresh">Start fresh</button>
+      <button type="button" class="btn btn-primary" id="btnSyncUpload">Upload</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js"
   integrity="sha384-zYPBGXwO4633CABX/5Spf6emCKUJCfoOkhOMYyxMsatqQZPnDblmmOewfjsIVWCM"
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- supabase-js (optional cloud sync). If it fails to load, the dashboard still works signed out. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
+  integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok"
   crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 /* ============================================================================
@@ -1061,34 +1210,39 @@ function defaultSettings() {
   };
 }
 
+/** Validate/coerce a stored settings object (localStorage or cloud). Returns null if unusable. */
+function normalizeSettings(parsed) {
+  if (!parsed || !Array.isArray(parsed.arrays) || !parsed.arrays.length) return null;
+  return {
+    lat: Number(parsed.lat) || CONFIG.DEFAULT_LAT,
+    lon: Number(parsed.lon) || CONFIG.DEFAULT_LON,
+    zip: parsed.zip ? String(parsed.zip) : "",
+    arrays: parsed.arrays.map((a) => ({
+      id: a.id || uid(),
+      name: String(a.name || "Array"),
+      watts: Number(a.watts) || 0,
+      tilt: Number(a.tilt) || 0,
+      azimuth: a.azimuth != null ? String(a.azimuth) : "South",
+      derate: a.derate == null || a.derate === "" ? null : Number(a.derate),
+    })),
+  };
+}
+
 function loadSettings() {
   try {
     const raw = localStorage.getItem(CONFIG.LS_SETTINGS);
     if (!raw) return defaultSettings();
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.arrays) || !parsed.arrays.length) {
-      return defaultSettings();
-    }
-    return {
-      lat: Number(parsed.lat) || CONFIG.DEFAULT_LAT,
-      lon: Number(parsed.lon) || CONFIG.DEFAULT_LON,
-      zip: parsed.zip ? String(parsed.zip) : "",
-      arrays: parsed.arrays.map((a) => ({
-        id: a.id || uid(),
-        name: String(a.name || "Array"),
-        watts: Number(a.watts) || 0,
-        tilt: Number(a.tilt) || 0,
-        azimuth: a.azimuth != null ? String(a.azimuth) : "South",
-        derate: a.derate == null || a.derate === "" ? null : Number(a.derate),
-      })),
-    };
+    return normalizeSettings(JSON.parse(raw)) || defaultSettings();
   } catch {
     return defaultSettings();
   }
 }
 
 function saveSettings(s) {
-  localStorage.setItem(CONFIG.LS_SETTINGS, JSON.stringify(s));
+  // Signed out: the original localStorage write. Signed in with the account
+  // row loaded, the account row is the store instead (see CLOUD SYNC).
+  if (!Cloud.isActive()) localStorage.setItem(CONFIG.LS_SETTINGS, JSON.stringify(s));
+  Cloud.noteChange();
 }
 
 function saveDataset() {
@@ -1104,10 +1258,11 @@ function saveDataset() {
         notes: r.rawNotes || "",
       })),
     };
-    localStorage.setItem(CONFIG.LS_DATASET, JSON.stringify(payload));
+    if (!Cloud.isActive()) localStorage.setItem(CONFIG.LS_DATASET, JSON.stringify(payload));
   } catch (e) {
     console.warn("Could not persist dataset", e);
   }
+  Cloud.noteChange();
 }
 
 function loadDatasetFromStorage() {
@@ -2553,6 +2708,11 @@ function applySampleData({ announce = true } = {}) {
 function restoreDatasetIfAny() {
   const data = loadDatasetFromStorage();
   if (!data) return;
+  applyDatasetPayload(data, " (restored)", "restored");
+}
+
+/** Load a stored raw cumulative dataset {name, rows:[{date,cum,cv,notes}]} into state. */
+function applyDatasetPayload(data, labelSuffix, source) {
   try {
     const rawRows = data.rows.map((r) => ({
       date: r.date,
@@ -2568,12 +2728,588 @@ function restoreDatasetIfAny() {
     }
     state.rows = deriveDailyFromCumulative(rawRows);
     state.csvName = data.name || "restored data";
-    state.dataSource = "restored";
-    $("csvFileName").textContent = state.csvName + " (restored)";
+    state.dataSource = source;
+    $("csvFileName").textContent = state.csvName + labelSuffix;
   } catch (e) {
     console.warn("Could not restore dataset", e);
   }
 }
+
+/* ============================================================================
+ * CLOUD SYNC (optional) — Supabase email magic-link sign-in
+ * ----------------------------------------------------------------------------
+ * Signed out (default): nothing below touches storage. The dashboard keeps
+ * its original localStorage behavior exactly (solarDash_* keys, same formats).
+ *
+ * Signed in: the user's row in public.user_settings is the source of truth.
+ *   - On sign-in / page load the row is fetched and rendered.
+ *   - Every change to settings or readings (all of which go through
+ *     saveSettings() / saveDataset()) is upserted on user_id, debounced ~1s.
+ *   - Decision: while signed in, edits are NOT written to localStorage. This
+ *     browser's local data is left exactly as it was before sign-in, so no
+ *     side is ever silently overwritten, a shared computer does not keep a
+ *     copy of the account's data, and signing out returns to the local data.
+ *     (The Open-Meteo weather cache, solarDash_weatherCache_v3, is public
+ *     weather data and keeps caching locally in both modes; it is not synced.)
+ *   - If the row cannot be loaded (offline / error), the page stays on this
+ *     browser's local data and behaves as signed out until Retry succeeds.
+ *
+ * Local -> cloud mapping (row columns of public.user_settings):
+ *   solarDash_settings_v5  {lat, lon, zip, arrays[]}
+ *       -> settings = { schema: 1, lat, lon, zip,
+ *                       arrays: [{id, name, watts, tilt, azimuth, derate}],
+ *                       dataset: { source, name } }
+ *   solarDash_dataset_v4   {source, name, rows: [{date, cum[], cv, notes}]}
+ *       -> readings = rows (same raw cumulative format: date "YYYY-MM-DD",
+ *                     cum = cumulative kWh per array in Settings order,
+ *                     cv = capacity-limited flag, notes = free text)
+ *          and source/name (where the data came from, e.g. the CSV file
+ *          name) -> settings.dataset
+ *   solarDash_weatherCache_v3 -> not synced.
+ *   user_id is the signed-in auth user; updated_at is set by a DB trigger.
+ *
+ * Concurrency: last write wins (two tabs/devices editing at once can
+ * overwrite each other's most recent change).
+ *
+ * Keys: only the project URL and the publishable (client) key belong here.
+ * Row-level security limits each signed-in user to their own row.
+ * NEVER put a service_role / secret key in this file.
+ * ========================================================================== */
+const SUPABASE_URL = "https://zxlsnxzifyeciofoibvv.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_WdOnlYyEvNr24fo_RdGDRA_qxXLCKWU";
+const PUBLIC_PAGE_URL = "https://danielajoie.github.io/SolarForecastDashboard/solar_dashboard.html";
+const SYNC_TABLE = "user_settings";
+const SYNC_DEBOUNCE_MS = 1000;
+const LINK_COOLDOWN_S = 60;
+
+/** Build the cloud row (minus user_id) from in-memory settings + history. */
+function toCloudRow(s, st) {
+  return {
+    settings: {
+      schema: 1,
+      lat: s.lat,
+      lon: s.lon,
+      zip: s.zip || "",
+      arrays: s.arrays.map((a) => ({
+        id: a.id,
+        name: a.name,
+        watts: a.watts,
+        tilt: a.tilt,
+        azimuth: a.azimuth,
+        derate: a.derate == null ? null : a.derate,
+      })),
+      dataset: { source: st.dataSource || "none", name: st.csvName || null },
+    },
+    readings: st.rows.map((r) => ({
+      date: r.date,
+      cum: r.cum.slice(),
+      cv: !!r.cv,
+      notes: r.rawNotes || "",
+    })),
+  };
+}
+
+/** Parse a cloud row into { settings, dataset } using the same validation as localStorage. */
+function fromCloudRow(row) {
+  const s = normalizeSettings(row && row.settings) || defaultSettings();
+  const readings = Array.isArray(row && row.readings) ? row.readings : [];
+  const meta = (row && row.settings && row.settings.dataset) || {};
+  const rows = readings
+    .filter((r) => r && typeof r.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.date))
+    .map((r) => ({
+      date: r.date,
+      cum: Array.isArray(r.cum) ? r.cum.map((v) => Number(v) || 0) : [],
+      cv: !!r.cv,
+      notes: r.notes ? String(r.notes) : "",
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    settings: s,
+    dataset: rows.length
+      ? { source: meta.source || "cloud", name: meta.name || "account data", rows }
+      : null,
+  };
+}
+
+function settingsFingerprint(s) {
+  return JSON.stringify({
+    lat: Number(s.lat), lon: Number(s.lon), zip: s.zip || "",
+    arrays: s.arrays.map((a) => [a.name, Number(a.watts), Number(a.tilt), String(a.azimuth),
+      a.derate == null ? null : Number(a.derate)]),
+  });
+}
+
+/** Compare raw rows ({notes}) and derived state rows ({rawNotes}, display notes) alike. */
+function readingsFingerprint(rows) {
+  return JSON.stringify(rows.map((r) => [r.date, (r.cum || []).map(Number), !!r.cv,
+    (r.rawNotes != null ? r.rawNotes : r.notes) || ""]));
+}
+
+function isSampleRows(rows) {
+  return readingsFingerprint(rows) === readingsFingerprint(parseCsv(SAMPLE_CSV));
+}
+
+/**
+ * What this browser has that the user would care about (ignores the built-in
+ * sample data and untouched default settings that every first visit saves).
+ */
+function localDataSummary() {
+  let settingsObj = null;
+  let ownSettings = false;
+  try {
+    const raw = localStorage.getItem(CONFIG.LS_SETTINGS);
+    if (raw) settingsObj = normalizeSettings(JSON.parse(raw));
+  } catch { settingsObj = null; }
+  if (settingsObj && settingsFingerprint(settingsObj) !== settingsFingerprint(defaultSettings())) {
+    ownSettings = true;
+  }
+  const ds = loadDatasetFromStorage();
+  const ownRows = ds && !isSampleRows(ds.rows) ? ds.rows.length : 0;
+  return {
+    any: ownSettings || ownRows > 0,
+    ownSettings,
+    ownRows,
+    settings: settingsObj || defaultSettings(),
+    rows: ds ? ds.rows : [],
+    arrays: (settingsObj || defaultSettings()).arrays.length,
+  };
+}
+
+function authRedirectUrl() {
+  const local = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
+  return local ? location.origin + location.pathname : PUBLIC_PAGE_URL;
+}
+
+/** Pull an auth error (e.g. expired link) out of the URL, if Supabase put one there. */
+function readAuthErrorFromUrl() {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const q = new URLSearchParams(location.search);
+  const desc = params.get("error_description") || q.get("error_description");
+  const code = params.get("error_code") || q.get("error_code") || params.get("error") || q.get("error");
+  if (!desc && !code) return null;
+  return { code, message: desc ? desc.replace(/\+/g, " ") : code };
+}
+
+/** Remove magic-link tokens / errors (and a dangling "#") from the address bar. */
+function cleanAuthUrl() {
+  const hash = location.hash.replace(/^#/, "");
+  const hashHasAuth = /(^|&)(access_token|refresh_token|expires_in|token_type|type|error|error_code|error_description|provider_token)=/.test(hash);
+  const q = new URLSearchParams(location.search);
+  let qChanged = false;
+  for (const k of ["error", "error_code", "error_description"]) {
+    if (q.has(k)) { q.delete(k); qChanged = true; }
+  }
+  const danglingHash = location.href.endsWith("#");
+  if (!hashHasAuth && !qChanged && !danglingHash) return;
+  const search = q.toString();
+  const keepHash = hashHasAuth || danglingHash ? "" : location.hash;
+  history.replaceState(history.state, "", location.pathname + (search ? "?" + search : "") + keepHash);
+}
+
+function friendlyAuthError(err) {
+  const msg = (err && err.message) || String(err || "Unknown error");
+  const code = (err && err.code) || "";
+  const status = err && err.status;
+  if (status === 429 || /rate.?limit/i.test(code) || /rate limit|only request this after/i.test(msg)) {
+    return "Too many sign-in emails right now (rate limit). Please wait a bit and try again. (" + msg + ")";
+  }
+  if (code === "email_address_not_authorized" || /not authorized/i.test(msg)) {
+    return "Sign-in emails can’t be sent to this address yet. (" + msg + ")";
+  }
+  if (code === "otp_disabled" || code === "signup_disabled" || /signups not allowed/i.test(msg)) {
+    return "New sign-ups are turned off for this site right now. (" + msg + ")";
+  }
+  if (status === 0 || /fetch|network/i.test(msg)) {
+    return "Couldn’t reach the sign-in service. Check your connection and try again.";
+  }
+  return "Couldn’t send the sign-in link: " + msg;
+}
+
+const Cloud = {
+  client: null,
+  user: null,
+  // "off" (signed out / unavailable) | "loading" | "choice" | "active" | "error"
+  mode: "off",
+  dirty: false,
+  inFlight: false,
+  timer: null,
+  applying: false,
+  cooldownTimer: null,
+
+  /** True when the account row is the store (localStorage writes are skipped). */
+  isActive() { return this.mode === "active"; },
+
+  /** Called by saveSettings()/saveDataset() after every change. */
+  noteChange() {
+    if (this.mode !== "active" || this.applying) return;
+    this.dirty = true;
+    this.setStatus("saving");
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), SYNC_DEBOUNCE_MS);
+  },
+
+  async flush() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (this.mode !== "active" || !this.dirty || !this.user) return;
+    if (this.inFlight) { this.timer = setTimeout(() => this.flush(), 300); return; }
+    const userId = this.user.id;
+    const row = { user_id: userId, ...toCloudRow(settings, state) };
+    this.inFlight = true;
+    this.dirty = false;
+    this.setStatus("saving");
+    try {
+      const { error } = await this.client.from(SYNC_TABLE).upsert(row, { onConflict: "user_id" });
+      if (error) throw error;
+      if (this.user && this.user.id === userId && !this.dirty) this.setStatus("saved");
+    } catch (e) {
+      console.warn("Cloud save failed", e);
+      if (this.user && this.user.id === userId) {
+        this.dirty = true;
+        this.setStatus(navigator.onLine === false ? "offline" : "error", e && e.message);
+      }
+    } finally {
+      this.inFlight = false;
+    }
+  },
+
+  setStatus(kind, detail) {
+    const el = $("syncStatus");
+    if (!el) return;
+    const labels = {
+      loading: "Loading…",
+      saving: "Saving…",
+      saved: "Saved",
+      ready: "Synced",
+      offline: "Offline — not saved",
+      error: "Sync error — not saved",
+      loadError: "Couldn’t load account data",
+      choice: "Not synced yet",
+    };
+    el.textContent = labels[kind] || kind;
+    el.classList.remove("saved", "saving", "error");
+    if (kind === "saved" || kind === "ready") el.classList.add("saved");
+    else if (kind === "saving" || kind === "loading" || kind === "choice") el.classList.add("saving");
+    else el.classList.add("error");
+    el.title = detail ? String(detail) : kind === "saved" ? "Saved " + new Date().toLocaleTimeString() : "";
+    $("btnSyncRetry").hidden = !(kind === "offline" || kind === "error" || kind === "loadError");
+  },
+
+  setMsg(text, kind) {
+    const el = $("accountMsg");
+    el.textContent = text;
+    el.classList.remove("ok", "err");
+    if (kind) el.classList.add(kind);
+  },
+
+  renderAccount() {
+    const signedIn = !!this.user;
+    $("accountSignedOut").hidden = signedIn;
+    $("accountSignedIn").hidden = !signedIn;
+    if (signedIn) $("acctWho").textContent = this.user.email || "your account";
+  },
+
+  disable(reason) {
+    $("acctEmail").disabled = true;
+    $("btnSendLink").disabled = true;
+    this.setMsg(reason, "err");
+  },
+
+  async init() {
+    $("accountSignedOut").addEventListener("submit", (e) => this.sendLink(e));
+    $("btnSignOut").addEventListener("click", () => this.signOut());
+    $("btnSyncRetry").addEventListener("click", () => this.retry());
+    $("btnSyncUpload").addEventListener("click", () => this.chooseUpload());
+    $("btnSyncFresh").addEventListener("click", () => this.chooseFresh());
+    window.addEventListener("online", () => { if (this.mode === "active" && this.dirty) this.flush(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && this.dirty) this.flush();
+    });
+    window.addEventListener("beforeunload", (e) => {
+      if (this.mode === "active" && (this.dirty || this.inFlight)) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    const urlError = readAuthErrorFromUrl();
+    const lib = window.supabase;
+    if (!lib || typeof lib.createClient !== "function") {
+      cleanAuthUrl();
+      this.disable("Cloud sync is unavailable right now (the sign-in library didn’t load). Your data stays in this browser.");
+      return;
+    }
+    try {
+      this.client = lib.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
+      });
+    } catch (e) {
+      console.warn("Supabase init failed", e);
+      this.disable("Cloud sync is unavailable right now. Your data stays in this browser.");
+      return;
+    }
+    // Don't await Supabase calls inside this callback (supabase-js can deadlock); defer instead.
+    this.client.auth.onAuthStateChange((event, session) => {
+      setTimeout(() => this.handleAuth(event, session), 0);
+    });
+    try {
+      await this.client.auth.getSession(); // waits for magic-link detection in the URL
+    } catch (e) {
+      console.warn("getSession failed", e);
+    }
+    cleanAuthUrl();
+    if (urlError) {
+      this.setMsg("Sign-in link problem: " + urlError.message + ". Request a new link below.", "err");
+    }
+  },
+
+  handleAuth(event, session) {
+    const user = session && session.user;
+    if (user) {
+      if (event === "SIGNED_IN" && (!this.user || this.user.id !== user.id) && this.mode === "off") {
+        showBanner($("bannerInfo"), "Signed in as " + (user.email || "your account") + ".");
+        setTimeout(() => showBanner($("bannerInfo"), ""), 3500);
+      }
+      this.enter(user);
+    } else if (this.user || this.mode !== "off") {
+      this.exitToLocal();
+    }
+  },
+
+  async enter(user) {
+    if (this.user && this.user.id === user.id && this.mode !== "off" && this.mode !== "error") {
+      this.user = user; // token refresh / user update
+      this.renderAccount();
+      return;
+    }
+    if (this.user && this.user.id !== user.id) this.exitToLocal();
+    this.user = user;
+    this.mode = "loading";
+    this.renderAccount();
+    this.setStatus("loading");
+    this.setMsg("Loading your account data…");
+    let data = null;
+    let error = null;
+    try {
+      ({ data, error } = await this.client
+        .from(SYNC_TABLE)
+        .select("settings, readings, updated_at")
+        .eq("user_id", user.id)
+        .maybeSingle());
+    } catch (e) {
+      error = e;
+    }
+    if (!this.user || this.user.id !== user.id || this.mode !== "loading") return; // signed out meanwhile
+    if (error) {
+      console.warn("Cloud load failed", error);
+      this.mode = "error";
+      this.setStatus("loadError", error.message);
+      this.setMsg("Couldn’t load your account data, so this page is using this browser’s data and won’t sync. Press Retry.", "err");
+      return;
+    }
+    const local = localDataSummary();
+    if (data) {
+      const cloud = fromCloudRow(data);
+      const differs = local.any && (
+        settingsFingerprint(cloud.settings) !== settingsFingerprint(local.settings) ||
+        readingsFingerprint(cloud.dataset ? cloud.dataset.rows : []) !== readingsFingerprint(local.rows)
+      );
+      this.applyCloud(cloud);
+      this.mode = "active";
+      this.setStatus("ready");
+      this.setSignedInMsg();
+      if (differs) {
+        // Said once, where it stays visible (weather banners can replace bannerInfo).
+        this.setMsg("Showing your account data. This browser’s own data is different; it’s kept unchanged here and comes back when you sign out.", "ok");
+      }
+    } else if (local.any) {
+      this.mode = "choice";
+      this.openChoice(local);
+    } else {
+      this.startFresh();
+    }
+  },
+
+  setSignedInMsg() {
+    this.setMsg("Changes save to your account automatically. This browser’s local data is kept separately and returns when you sign out.");
+  },
+
+  /** Render cloud data without writing localStorage or triggering a save. */
+  applyCloud(cloud) {
+    const prev = { lat: settings.lat, lon: settings.lon };
+    this.applying = true;
+    try {
+      settings = cloud.settings;
+      if (cloud.dataset) {
+        applyDatasetPayload(cloud.dataset, " (account)", "cloud");
+      } else {
+        state.rows = [];
+        state.csvName = null;
+        state.dataSource = "none";
+        $("csvFileName").textContent = "none (account)";
+      }
+      renderEntryForm();
+      recomputeAndRender();
+    } finally {
+      this.applying = false;
+    }
+    if (prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
+  },
+
+  openChoice(local) {
+    const items = [];
+    if (local.ownSettings) items.push(`Your settings (${local.arrays} array${local.arrays === 1 ? "" : "s"}, location${local.settings.zip ? " ZIP " + local.settings.zip : ""})`);
+    if (local.ownRows) items.push(`${local.ownRows} day${local.ownRows === 1 ? "" : "s"} of readings`);
+    $("syncChoiceSummary").innerHTML = items.map((t) => "<li>" + escapeHtml(t) + "</li>").join("");
+    this.setStatus("choice");
+    this.setMsg("Your account is empty. Choose whether to upload this browser’s data.");
+    $("syncChoiceModal").classList.add("open");
+    $("btnSyncUpload").focus();
+  },
+
+  closeChoice() { $("syncChoiceModal").classList.remove("open"); },
+
+  /** Upload: push this browser's local data as the account's first row. */
+  async chooseUpload() {
+    if (this.mode !== "choice") return this.closeChoice();
+    this.closeChoice();
+    const prev = { lat: settings.lat, lon: settings.lon };
+    this.applying = true;
+    try {
+      settings = loadSettings();
+      state.rows = [];
+      restoreDatasetIfAny();
+      renderEntryForm();
+      recomputeAndRender();
+    } finally {
+      this.applying = false;
+    }
+    if (prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
+    this.mode = "active";
+    this.setSignedInMsg();
+    this.dirty = true;
+    await this.flush();
+    if (!this.dirty) {
+      showBanner($("bannerInfo"), "Uploaded this browser’s data to your account.");
+      setTimeout(() => showBanner($("bannerInfo"), ""), 4000);
+    }
+  },
+
+  chooseFresh() {
+    if (this.mode !== "choice") return this.closeChoice();
+    this.closeChoice();
+    this.startFresh();
+  },
+
+  /** Empty account: show defaults + sample data; the row is created on the first change. */
+  startFresh() {
+    const prev = { lat: settings.lat, lon: settings.lon };
+    this.mode = "active";
+    this.applying = true;
+    try {
+      settings = defaultSettings();
+      applySampleData({ announce: false });
+    } finally {
+      this.applying = false;
+    }
+    if (prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
+    this.setStatus("ready", "Nothing saved yet — your first change creates your account copy.");
+    this.setSignedInMsg();
+  },
+
+  /** Back to signed-out behavior: stop syncing and reload this browser's local data. */
+  exitToLocal() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.dirty = false;
+    const wasShowingCloud = this.mode === "active" || this.mode === "choice";
+    this.user = null;
+    this.mode = "off";
+    this.closeChoice();
+    this.renderAccount();
+    this.setMsg("Signed out. Showing this browser’s data; it stays in this browser only.");
+    if (!wasShowingCloud) return;
+    const prev = { lat: settings.lat, lon: settings.lon };
+    settings = loadSettings();
+    state.rows = [];
+    state.csvName = null;
+    state.dataSource = "none";
+    $("csvFileName").textContent = "none loaded";
+    restoreDatasetIfAny();
+    if (!state.rows.length) applySampleData({ announce: false });
+    renderEntryForm();
+    recomputeAndRender();
+    if (prev.lat !== settings.lat || prev.lon !== settings.lon) loadWeather();
+  },
+
+  async signOut() {
+    const btn = $("btnSignOut");
+    btn.disabled = true;
+    try {
+      if (this.dirty) await this.flush();
+      const { error } = await this.client.auth.signOut({ scope: "local" });
+      if (error) console.warn("Sign-out error", error);
+    } catch (e) {
+      console.warn("Sign-out failed", e);
+    } finally {
+      btn.disabled = false;
+      this.exitToLocal();
+    }
+  },
+
+  retry() {
+    if (this.mode === "error" && this.user) {
+      const u = this.user;
+      this.mode = "off";
+      this.user = null;
+      this.enter(u);
+    } else if (this.mode === "active") {
+      this.dirty = true;
+      this.flush();
+    }
+  },
+
+  async sendLink(e) {
+    e.preventDefault();
+    if (!this.client) return;
+    const input = $("acctEmail");
+    const btn = $("btnSendLink");
+    const email = input.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      this.setMsg("Enter a valid email address.", "err");
+      input.focus();
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+    let error = null;
+    try {
+      ({ error } = await this.client.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: authRedirectUrl() },
+      }));
+    } catch (err) {
+      error = err;
+    }
+    if (error) {
+      this.setMsg(friendlyAuthError(error), "err");
+      btn.disabled = false;
+      btn.textContent = "Email me a sign-in link";
+      return;
+    }
+    this.setMsg(`Check your email: we sent a sign-in link to ${email}. Open it to sign in (it works once and expires in about an hour).`, "ok");
+    let left = LINK_COOLDOWN_S;
+    btn.textContent = `Resend in ${left}s`;
+    clearInterval(this.cooldownTimer);
+    this.cooldownTimer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(this.cooldownTimer);
+        btn.disabled = false;
+        btn.textContent = "Email me a sign-in link";
+      } else {
+        btn.textContent = `Resend in ${left}s`;
+      }
+    }, 1000);
+  },
+};
 
 /* ============================================================================
  * INIT
@@ -2663,6 +3399,7 @@ function init() {
   }
 
   loadWeather();
+  Cloud.init();
 }
 
 init();

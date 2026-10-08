@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Solar Forecast Dashboard</title>
-<meta http-equiv="refresh" content="0; url=solar_dashboard.html" />
 <link rel="canonical" href="https://danielajoie.github.io/SolarForecastDashboard/solar_dashboard.html" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <meta name="description" content="Free in-browser solar dashboard: track production and get a 7-day forecast from Open-Meteo weather. No API keys." />
@@ -19,7 +18,9 @@
 <meta name="twitter:title" content="Solar Forecast Dashboard" />
 <meta name="twitter:description" content="Track solar production and forecast the next 7 days. Free, no API keys, runs in your browser." />
 <meta name="twitter:image" content="https://danielajoie.github.io/SolarForecastDashboard/og-image.png" />
+<!-- Keep ?query and #hash (Supabase magic-link tokens arrive in the hash). -->
 <script>location.replace("solar_dashboard.html" + location.search + location.hash);</script>
+<noscript><meta http-equiv="refresh" content="0; url=solar_dashboard.html" /></noscript>
 <style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}a{color:#f5b301}</style>
 </head>
 <body>
